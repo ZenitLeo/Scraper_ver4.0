@@ -469,24 +469,19 @@ class FacebookScraper:
             self.logger.error(f"Error closing modal: {e}")
 
 
-    async def extract_full_comments(self, page: Page) -> list:
+     async def extract_full_comments(self, page: Page) -> list:
         """Извлекаем все комментарии с полной страницы поста"""
         comments = []
-        
         try:
             print("\033[94mИщем комментарии в модальном окне или на странице...\033[0m")
-            
-            # Ждем загрузки контента
             await page.wait_for_timeout(3000)
-            
-            # Определяем контейнер для поиска
+            # Поиск контейнера с комментариями
             modal_selectors = [
                 'div[role="dialog"]',
                 'div[aria-modal="true"]',
                 'div[data-visualcompletion="ignore-dynamic-aria"][role="dialog"]',
                 'div.x1n2onr6:has(div[role="main"])'
             ]
-            
             search_container = page
             for selector in modal_selectors:
                 modal_container = await page.query_selector(selector)
@@ -494,61 +489,48 @@ class FacebookScraper:
                     search_container = modal_container
                     print(f"\033[94mНайдено модальное окно: {selector}\033[0m")
                     break
-            
-            # Прокручиваем и загружаем больше комментариев
-            await self.load_more_comments(page, search_container)
-            
-            # УЛУЧШЕННЫЕ селекторы для комментариев
+
+            # Новый приоритетный список селекторов
             comment_selectors = [
-                # Основные селекторы для комментариев
-                'div[role="article"][aria-label*="Comment"]',
-                'div[role="article"][aria-label*="comment"]',
-                'div[data-testid="UFI2Comment/root"]',
-                'div[data-testid="comment_element"]',
-                
-                # Структурные селекторы
-                'div.x1y1aw1k.xwib8y2.xurb0ha.xcdnw81',
-                'div.x1ja2u2z.x1afv6bq.x1ch86jh.x1fcty0u.x1s65ae0.x78zum5.x1q0g3np.x1qughib',
-                
-                # Альтернативные селекторы
-                'li[data-testid="comment-list-item"]',
-                'div[aria-label="Comment"] div.x1iorvi4',
-                
-                # Селекторы для вложенных комментариев
-                'div.x1n2onr6 > div.x1ja2u2z.x1afv6bq',
-                'ul[role="list"] > li > div[role="article"]'
+                'ul[role="list"] > li > div[role="article"]',
+                'ul[role="list"] li[role="article"]',
+                'div[role="article"][tabindex="0"]',
+                # fallback — если ничего не найдено, ищем просто текстовые блоки
+                'div[dir="auto"][style*="text-align"]'
             ]
-            
-            # Пробуем каждый селектор
+
+            found_any = False
             for selector in comment_selectors:
                 try:
                     comment_elements = await search_container.query_selector_all(selector)
+                    print(f"DEBUG: Селектор {selector} нашёл {len(comment_elements)} элементов")
                     if comment_elements and len(comment_elements) > 0:
                         print(f"\033[94mНайдено {len(comment_elements)} комментариев с селектором: {selector}\033[0m")
-                        
+                        found_any = True
                         for i, comment_element in enumerate(comment_elements):
                             try:
+                                # Можно использовать твою extract_single_comment или кастомную
                                 comment_data = await self.extract_single_comment(comment_element, i)
                                 if comment_data and comment_data['content'].strip():
                                     comments.append(comment_data)
                             except Exception as e:
                                 self.logger.error(f"Error extracting comment {i}: {e}")
                                 continue
-                        
-                        # Если нашли комментарии, прекращаем поиск
+                        # Если нашли комментарии, прекращаем поиск по другим селекторам
                         if comments:
                             break
-                            
                 except Exception as e:
                     self.logger.error(f"Error with selector {selector}: {e}")
                     continue
-            
-            print(f"\033[92mВсего извлечено уникальных комментариев: {len(comments)}\033[0m")
-            
+
+            if not found_any:
+                print("\033[91mНе удалось найти комментарии ни одним селектором. Проверьте структуру страницы!\033[0m")
+            else:
+                print(f"\033[92mВсего извлечено уникальных комментариев: {len(comments)}\033[0m")
+
         except Exception as e:
             self.logger.error(f"Error extracting full comments: {e}")
             print(f"\033[91mОшибка при извлечении комментариев: {e}\033[0m")
-        
         return comments
         
     async def extract_single_comment(self, comment_element, index: int) -> dict:

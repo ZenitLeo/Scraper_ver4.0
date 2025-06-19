@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright, Browser, Page, Playwright
-from domanalyzer import domanalyzer
+from domanalyzer import facebook_dom_analyzer
 import pytz
 import sys
 
@@ -151,7 +151,7 @@ class FacebookScraper:
                 print("\033[92mЛогин подтвержден успешно! Начинаем сбор данных...\033[0m")
 
                 # Получаем актуальные селекторы для этой страницы
-                self.selectors = await facebook_dom_analyzer.get_selectors(page)
+                self.selectors = await facebook_dom_analyzer.analyze_feed_posts(page)
                 posts = await self.collect_posts_with_comments(page, max_posts)
                 self.data_structure["posts"] = posts
                 self.save_results()

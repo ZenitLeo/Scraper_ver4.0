@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import logging
 import json
 import time
@@ -57,6 +58,370 @@ def setup_logging():
         'scraper': scraper_logger,
         'errors': error_logger
     }
+class InteractiveDialog:
+    """Класс для интерактивного диалога с пользователем"""
+    
+    @staticmethod
+    def print_header():
+        """Печатает заголовок программы"""
+        print("\n" + "="*60)
+        print("🚀 FACEBOOK SCRAPER - Интерактивный режим")
+        print("="*60)
+    
+    @staticmethod
+    def get_scraping_mode() -> str:
+        """Выбор режима парсинга"""
+        print("\n📋 Выберите режим парсинга:")
+        print("1. Парсить один конкретный пост")
+        print("2. Парсить посты из группы/страницы")
+        print("3. Парсить посты из ленты новостей")
+        
+        while True:
+            try:
+                choice = input("\nВведите номер режима (1-3): ").strip()
+                if choice == "1":
+                    return "single_post"
+                elif choice == "2":
+                    return "group_page"
+                elif choice == "3":
+                    return "news_feed"
+                else:
+                    print("❌ Неверный выбор. Введите 1, 2 или 3.")
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы...")
+                sys.exit(0)
+    
+    @staticmethod
+    def get_url_input(mode: str) -> str:
+        """Получает URL от пользователя в зависимости от режима"""
+        if mode == "single_post":
+            print("\n🔗 Введите URL конкретного поста Facebook:")
+            print("Пример: https://www.facebook.com/username/posts/123456789")
+        elif mode == "group_page":
+            print("\n🔗 Введите URL группы или страницы Facebook:")
+            print("Пример: https://www.facebook.com/groups/groupname")
+        else:  # news_feed
+            print("\n🔗 Для парсинга ленты новостей используется стандартный URL")
+            return "https://www.facebook.com"
+        
+        while True:
+            try:
+                url = input("URL: ").strip()
+                if url and ("facebook.com" in url or "fb.com" in url):
+                    return url
+                else:
+                    print("❌ Введите корректный URL Facebook")
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы...")
+                sys.exit(0)
+    
+    @staticmethod
+    def get_posts_count(mode: str) -> int:
+        """Получает количество постов для парсинга"""
+        if mode == "single_post":
+            return 1
+        
+        print(f"\n📊 Сколько постов нужно спарсить?")
+        print("Рекомендуемые варианты:")
+        print("• 1-5 постов - быстрый тест")
+        print("• 10-20 постов - средний объем")
+        print("• 50+ постов - большой объем (может занять много времени)")
+        
+        while True:
+            try:
+                count = input("\nВведите количество постов (или 'all' для всех доступных): ").strip()
+                
+                if count.lower() == 'all':
+                    return -1  # -1 означает "все посты"
+                
+                count_int = int(count)
+                if count_int > 0:
+                    if count_int > 100:
+                        confirm = input(f"⚠️ Вы хотите спарсить {count_int} постов. Это может занять очень много времени. Продолжить? (y/n): ")
+                        if confirm.lower() not in ['y', 'yes', 'да', 'д']:
+                            continue
+                    return count_int
+                else:
+                    print("❌ Введите положительное число")
+                    
+            except ValueError:
+                print("❌ Введите корректное число или 'all'")
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы...")
+                sys.exit(0)
+    
+    @staticmethod
+    def get_comments_settings() -> Dict[str, Any]:
+        """Настройки для парсинга комментариев"""
+        print("\n💬 Настройки комментариев:")
+        
+        # Парсить ли комментарии
+        parse_comments = InteractiveDialog.yes_no_question(
+            "Парсить комментарии к постам?", 
+            default=True
+        )
+        
+        if not parse_comments:
+            return {"parse_comments": False}
+        
+        # Максимальное количество комментариев на пост
+        print("\n📝 Максимальное количество комментариев на пост:")
+        print("• 10-20 - основные комментарии")
+        print("• 50-100 - расширенный набор")
+        print("• 'all' - все доступные комментарии")
+        
+        while True:
+            try:
+                max_comments = input("Введите максимальное количество комментариев ('all' для всех): ").strip()
+                
+                if max_comments.lower() == 'all':
+                    max_comments_int = -1
+                    break
+                
+                max_comments_int = int(max_comments)
+                if max_comments_int > 0:
+                    break
+                else:
+                    print("❌ Введите положительное число или 'all'")
+                    
+            except ValueError:
+                print("❌ Введите корректное число или 'all'")
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы...")
+                sys.exit(0)
+        
+        # Парсить ли ответы на комментарии
+        parse_replies = InteractiveDialog.yes_no_question(
+            "Парсить ответы на комментарии? (может значительно увеличить время)", 
+            default=False
+        )
+        
+        return {
+            "parse_comments": True,
+            "max_comments": max_comments_int,
+            "parse_replies": parse_replies
+        }
+    
+    @staticmethod
+    def get_delay_settings() -> Dict[str, int]:
+        """Настройки задержек"""
+        print("\n⏱️ Настройки задержек (для избежания блокировки):")
+        print("1. Минимальные задержки (быстро, но риск блокировки)")
+        print("2. Умеренные задержки (рекомендуется)")
+        print("3. Максимальные задержки (медленно, но безопасно)")
+        print("4. Пользовательские настройки")
+        
+        while True:
+            try:
+                choice = input("\nВыберите вариант (1-4): ").strip()
+                
+                if choice == "1":
+                    return {"post_delay": 2, "comment_delay": 1, "scroll_delay": 1}
+                elif choice == "2":
+                    return {"post_delay": 5, "comment_delay": 2, "scroll_delay": 2}
+                elif choice == "3":
+                    return {"post_delay": 10, "comment_delay": 5, "scroll_delay": 3}
+                elif choice == "4":
+                    return InteractiveDialog.get_custom_delays()
+                else:
+                    print("❌ Выберите вариант от 1 до 4")
+                    
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы...")
+                sys.exit(0)
+    
+    @staticmethod
+    def get_custom_delays() -> Dict[str, int]:
+        """Пользовательские настройки задержек"""
+        delays = {}
+        
+        delay_params = [
+            ("post_delay", "Задержка между постами (сек)", 5),
+            ("comment_delay", "Задержка между комментариями (сек)", 2),
+            ("scroll_delay", "Задержка при прокрутке (сек)", 2)
+        ]
+        
+        for param, description, default in delay_params:
+            while True:
+                try:
+                    value = input(f"{description} [по умолчанию {default}]: ").strip()
+                    if not value:
+                        delays[param] = default
+                        break
+                    
+                    value_int = int(value)
+                    if value_int >= 0:
+                        delays[param] = value_int
+                        break
+                    else:
+                        print("❌ Введите неотрицательное число")
+                        
+                except ValueError:
+                    print("❌ Введите корректное число")
+                except KeyboardInterrupt:
+                    print("\n👋 Выход из программы...")
+                    sys.exit(0)
+        
+        return delays
+    
+    @staticmethod
+    def get_output_settings() -> Dict[str, Any]:
+        """Настройки вывода результатов"""
+        print("\n💾 Настройки сохранения результатов:")
+        
+        # Имя файла
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"facebook_scraping_{timestamp}.json"
+        
+        filename = input(f"Имя файла для сохранения [по умолчанию: {default_filename}]: ").strip()
+        if not filename:
+            filename = default_filename
+        
+        if not filename.endswith('.json'):
+            filename += '.json'
+        
+        # Дополнительные форматы
+        save_csv = InteractiveDialog.yes_no_question(
+            "Также сохранить в CSV формате?", 
+            default=False
+        )
+        
+        # Подробность логирования
+        print("\nУровень детализации логов:")
+        print("1. Минимальный (только основные события)")
+        print("2. Средний (рекомендуется)")
+        print("3. Подробный (все действия)")
+        
+        while True:
+            try:
+                log_level = input("Выберите уровень (1-3) [по умолчанию 2]: ").strip()
+                if not log_level:
+                    log_level = "2"
+                
+                if log_level in ["1", "2", "3"]:
+                    log_levels = {"1": "WARNING", "2": "INFO", "3": "DEBUG"}
+                    break
+                else:
+                    print("❌ Выберите 1, 2 или 3")
+                    
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы...")
+                sys.exit(0)
+        
+        return {
+            "filename": filename,
+            "save_csv": save_csv,
+            "log_level": log_levels[log_level]
+        }
+    
+    @staticmethod
+    def yes_no_question(question: str, default: bool = True) -> bool:
+        """Задает вопрос с ответом да/нет"""
+        default_text = "Y/n" if default else "y/N"
+        
+        while True:
+            try:
+                answer = input(f"{question} ({default_text}): ").strip().lower()
+                
+                if not answer:
+                    return default
+                
+                if answer in ['y', 'yes', 'да', 'д']:
+                    return True
+                elif answer in ['n', 'no', 'нет', 'н']:
+                    return False
+                else:
+                    print("❌ Введите 'y' (да) или 'n' (нет)")
+                    
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы...")
+                sys.exit(0)
+    
+    @staticmethod
+    def get_authentication_settings() -> Dict[str, str]:
+        """Получает настройки аутентификации"""
+        print("\n🔐 Настройки входа в Facebook:")
+        print("Введите ваши учетные данные Facebook")
+        print("(данные используются только для входа и не сохраняются)")
+        
+        while True:
+            try:
+                email = input("\nEmail или номер телефона: ").strip()
+                if email:
+                    break
+                print("❌ Email не может быть пустым")
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы...")
+                sys.exit(0)
+        
+        while True:
+            try:
+                import getpass
+                password = getpass.getpass("Пароль: ")
+                if password:
+                    break
+                print("❌ Пароль не может быть пустым")
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы...")
+                sys.exit(0)
+        
+        return {"email": email, "password": password}
+    
+    @staticmethod
+    def show_summary(config: Dict[str, Any]):
+        """Показывает сводку настроек перед началом парсинга"""
+        print("\n" + "="*60)
+        print("📋 СВОДКА НАСТРОЕК")
+        print("="*60)
+        
+        print(f"🎯 Режим парсинга: {config['mode']}")
+        print(f"🔗 URL: {config['url']}")
+        print(f"📊 Количество постов: {config['posts_count'] if config['posts_count'] != -1 else 'Все доступные'}")
+        
+        if config['comments']['parse_comments']:
+            max_comments = config['comments']['max_comments']
+            print(f"💬 Комментарии: Да (макс. {max_comments if max_comments != -1 else 'все'})")
+            print(f"↩️ Ответы на комментарии: {'Да' if config['comments']['parse_replies'] else 'Нет'}")
+        else:
+            print(f"💬 Комментарии: Нет")
+        
+        print(f"⏱️ Задержки: {config['delays']['post_delay']}с между постами")
+        print(f"💾 Файл результатов: {config['output']['filename']}")
+        print(f"📄 CSV экспорт: {'Да' if config['output']['save_csv'] else 'Нет'}")
+        
+        print("\n" + "="*60)
+        
+        if not InteractiveDialog.yes_no_question("Начать парсинг с этими настройками?", default=True):
+            print("👋 Парсинг отменен пользователем")
+            sys.exit(0)
+
+def get_interactive_config() -> Dict[str, Any]:
+    """Главная функция для получения всех настроек через диалог"""
+    InteractiveDialog.print_header()
+    
+    # Получаем все настройки
+    mode = InteractiveDialog.get_scraping_mode()
+    url = InteractiveDialog.get_url_input(mode)
+    posts_count = InteractiveDialog.get_posts_count(mode)
+    comments = InteractiveDialog.get_comments_settings()
+    delays = InteractiveDialog.get_delay_settings()
+    output = InteractiveDialog.get_output_settings()
+    auth = InteractiveDialog.get_authentication_settings()
+    
+    config = {
+        "mode": mode,
+        "url": url,
+        "posts_count": posts_count,
+        "comments": comments,
+        "delays": delays,
+        "output": output,
+        "auth": auth
+    }
+    
+    # Показываем сводку
+    InteractiveDialog.show_summary(config)
+    
+    return config
 
 @dataclass
 class Comment:
@@ -211,57 +576,221 @@ class FacebookDOMAnalyzer:
     async def analyze_modal(self, page: Page) -> Dict[str, Any]:
         """Анализирует модальное окно и возвращает информацию о его содержимом"""
         try:
-            modal_selector = '[role="dialog"], div[aria-modal="true"]'
-            modal = await page.query_selector(modal_selector)
+            print(f"\033[94m🔍 Проверяем наличие модального окна...\033[0m")
+            self.logger.info("🔍 Начинаем анализ модального окна")
             
-            if not modal:
-                return {"is_modal": False, "type": None}
+            # Расширенные селекторы для модальных окон Facebook
+            modal_selectors = [
+                '[role="dialog"]',
+                'div[aria-modal="true"]',
+                'div[data-testid="modal-dialog"]',
+                'div[aria-labelledby*="modal"]',
+                'div[class*="modal"]',
+                'div[style*="position: fixed"]',
+                'div[style*="z-index"]',
+                # Специфичные для Facebook
+                'div[data-testid="photo-viewer"]',
+                'div[data-testid="media-viewer"]',
+                'div[data-testid="post-modal"]'
+            ]
             
+            modal_element = None
+            used_selector = None
+            
+            # Пробуем каждый селектор
+            for selector in modal_selectors:
+                try:
+                    element = await page.query_selector(selector)
+                    if element:
+                        # Проверяем, видим ли элемент
+                        is_visible = await element.is_visible()
+                        if is_visible:
+                            modal_element = element
+                            used_selector = selector
+                            print(f"\033[92m✓ Модальное окно найдено с селектором: {selector}\033[0m")
+                            self.logger.info(f"✓ Модальное окно найдено с селектором: {selector}")
+                            break
+                        else:
+                            print(f"\033[93m⚠ Элемент найден, но не видим: {selector}\033[0m")
+                except Exception as e:
+                    print(f"\033[91m✗ Ошибка с селектором {selector}: {e}\033[0m")
+                    continue
+            
+            if not modal_element:
+                print(f"\033[91m❌ Модальное окно не найдено\033[0m")
+                self.logger.info("❌ Модальное окно не найдено")
+                
+                # Дополнительная диагностика - проверяем URL
+                current_url = page.url
+                print(f"\033[94mТекущий URL: {current_url}\033[0m")
+                
+                # Проверяем, есть ли признаки модального контента в URL
+                modal_url_indicators = ['/photo/', '/video/', '/posts/', '?story_fbid=', 'permalink']
+                url_suggests_modal = any(indicator in current_url for indicator in modal_url_indicators)
+                
+                if url_suggests_modal:
+                    print(f"\033[93m⚠ URL предполагает модальный контент, но модальное окно не найдено\033[0m")
+                    self.logger.warning("URL предполагает модальный контент, но модальное окно не найдено")
+                
+                return {
+                    "is_modal": False, 
+                    "type": None,
+                    "url_suggests_modal": url_suggests_modal,
+                    "current_url": current_url
+                }
+            
+            # Анализируем тип модального окна
             modal_type = "unknown"
+            modal_features = []
             
-            # Проверяем тип модального окна
-            comments_indicators = [
-                '[aria-label*="Comments"]',
-                'div[data-testid="UFI2CommentsCount"]',
-                'h2:has-text("Comments")',
-                'h2:has-text("Комментарии")',
-                '[data-testid="UFI2Comment/root"]'
-            ]
+            # Получаем HTML модального окна для анализа
+            try:
+                modal_html = await modal_element.inner_html()
+                modal_text = await modal_element.inner_text()
+                
+                print(f"\033[96mРазмер HTML модального окна: {len(modal_html)} символов\033[0m")
+                print(f"\033[96mРазмер текста модального окна: {len(modal_text)} символов\033[0m")
+                
+                # Показываем первые 200 символов текста для диагностики
+                preview_text = modal_text[:200].replace('\n', ' ').strip()
+                print(f"\033[96mПревью текста: {preview_text}...\033[0m")
+                
+            except Exception as e:
+                print(f"\033[91mОшибка при получении содержимого модального окна: {e}\033[0m")
+                modal_html = ""
+                modal_text = ""
             
-            for indicator in comments_indicators:
-                if await page.query_selector(indicator):
-                    modal_type = "comments"
-                    break
+            # Проверяем тип модального окна по содержимому
+            type_indicators = {
+                'comments': [
+                    '[aria-label*="Comments"]',
+                    'div[data-testid="UFI2CommentsCount"]',
+                    'h2:has-text("Comments")',
+                    'h2:has-text("Комментарии")',
+                    '[data-testid="UFI2Comment/root"]',
+                    'div[role="textbox"][aria-label*="comment"]',
+                    'span:has-text("Write a comment")',
+                    'span:has-text("Написать комментарий")'
+                ],
+                'media': [
+                    'img[data-testid="photo"]',
+                    'video',
+                    '[aria-label*="Photo"]',
+                    '[aria-label*="Video"]',
+                    'div[data-testid="media-viewer"]',
+                    'div[data-testid="photo-viewer"]',
+                    'img[style*="max-width"]'
+                ],
+                'post': [
+                    '[data-testid="post_message"]',
+                    'div[data-ad-comet-preview="message"]',
+                    '[data-testid="story-subtitle"]',
+                    'div[role="article"]'
+                ]
+            }
             
-            media_indicators = [
-                'img[data-testid="photo"]',
-                'video',
-                '[aria-label*="Photo"]',
-                '[aria-label*="Video"]',
-                'div[data-testid="media-viewer"]'
-            ]
+            detected_types = []
             
-            for indicator in media_indicators:
-                if await page.query_selector(indicator):
-                    modal_type = "media" if modal_type == "unknown" else f"{modal_type}_media"
-                    break
+            for type_name, selectors in type_indicators.items():
+                type_found = False
+                found_selectors = []
+                
+                for selector in selectors:
+                    try:
+                        elements = await modal_element.query_selector_all(selector)
+                        if elements:
+                            visible_elements = []
+                            for elem in elements:
+                                if await elem.is_visible():
+                                    visible_elements.append(elem)
+                            
+                            if visible_elements:
+                                type_found = True
+                                found_selectors.append(f"{selector} ({len(visible_elements)})")
+                    except Exception as e:
+                        continue
+                
+                if type_found:
+                    detected_types.append(type_name)
+                    modal_features.extend(found_selectors)
+                    print(f"\033[92m✓ Обнаружен тип '{type_name}': {', '.join(found_selectors)}\033[0m")
             
-            has_comments_section = any(await modal.query_selector(indicator) for indicator in comments_indicators)
+            # Определяем основной тип
+            if detected_types:
+                modal_type = '_'.join(detected_types)
+            else:
+                modal_type = "unknown"
+                print(f"\033[93m⚠ Тип модального окна не определен\033[0m")
+            
+            # Дополнительные проверки
+            try:
+                # Проверяем наличие кнопки закрытия
+                close_selectors = [
+                    '[aria-label="Close"]',
+                    'button[aria-label="Закрыть"]',
+                    '[aria-label*="close"]',
+                    'div[role="button"][aria-label*="Close"]',
+                    'svg[aria-label="Close"]'
+                ]
+                
+                close_button_found = False
+                for selector in close_selectors:
+                    if await modal_element.query_selector(selector):
+                        close_button_found = True
+                        break
+                
+                # Проверяем размеры модального окна
+                bounding_box = await modal_element.bounding_box()
+                modal_size = None
+                if bounding_box:
+                    modal_size = {
+                        'width': bounding_box['width'],
+                        'height': bounding_box['height'],
+                        'x': bounding_box['x'],
+                        'y': bounding_box['y']
+                    }
+                    print(f"\033[96mРазмер модального окна: {modal_size['width']}x{modal_size['height']}\033[0m")
+                
+            except Exception as e:
+                print(f"\033[91mОшибка при дополнительных проверках: {e}\033[0m")
+                close_button_found = False
+                modal_size = None
+            
+            result = {
+                "is_modal": True,
+                "type": modal_type,
+                "detected_types": detected_types,
+                "features": modal_features,
+                "has_comments": 'comments' in detected_types,
+                "has_media": 'media' in detected_types,
+                "has_close_button": close_button_found,
+                "modal_element": modal_element,
+                "selector_used": used_selector,
+                "size": modal_size,
+                "current_url": page.url,
+                "text_preview": preview_text if 'preview_text' in locals() else ""
+            }
+            
+            print(f"\033[92m✅ Анализ модального окна завершен\033[0m")
+            print(f"\033[96mТип: {modal_type}\033[0m")
+            print(f"\033[96mОбнаруженные типы: {', '.join(detected_types)}\033[0m")
+            print(f"\033[96mЕсть комментарии: {'Да' if result['has_comments'] else 'Нет'}\033[0m")
             
             self.logger.info(f"📱 Обнаружено модальное окно типа: {modal_type}")
             
-            return {
-                "is_modal": True,
-                "type": modal_type,
-                "has_comments": has_comments_section,
-                "modal_element": modal,
-                "selectors": await self.get_selectors('modal')
-            }
+            return result
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка при анализе модального окна: {e}")
+            error_msg = f"❌ Ошибка при анализе модального окна: {e}"
+            self.logger.error(error_msg)
+            print(f"\033[91m{error_msg}\033[0m")
             logging.getLogger('errors').error(f"Ошибка анализа модального окна: {e}")
-            return {"is_modal": False, "type": None, "error": str(e)}
+            return {
+                "is_modal": False, 
+                "type": None, 
+                "error": str(e),
+                "current_url": page.url if page else "unknown"
+            }
 
 class FacebookScraper:
     def __init__(self, headless: bool = True, cookies_file: str = "cookies.json"):
@@ -347,53 +876,52 @@ class FacebookScraper:
             self.logger.error(f"❌ Ошибка при закрытии браузера: {e}")
 
     async def login(self, email: str, password: str) -> bool:
-        """Авторизация в Facebook с сохранением сессии"""
+        """Авторизация в Facebook с сохранением сессии (ручной сценарий входа)"""
         try:
             self.logger.info(f"🔐 Начинаем авторизацию для {email}")
-            
-            # Проверяем, не авторизованы ли мы уже
+
+            # Открываем главную страницу Facebook
             await self.page.goto('https://www.facebook.com', wait_until='networkidle')
-            
-            # Если есть поле для входа, значит не авторизованы
+
+            # Проверяем, не авторизованы ли мы уже
             email_field = await self.page.query_selector('input[name="email"]')
             if not email_field:
                 self.logger.info("✅ Пользователь уже авторизован")
                 return True
-            
-            # Выполняем авторизацию
+
+            # Выполняем авторизацию (заполняем поля, но не кликаем сами)
             self.logger.info("📝 Вводим учетные данные")
             await self.page.fill('input[name="email"]', email)
             await self.page.fill('input[name="pass"]', password)
-            
-            # Нажимаем кнопку входа
-            await self.page.click('button[name="login"]')
-            await self.page.wait_for_load_state('networkidle')
-            
-            # Проверяем успешность входа
+
+            print("\n=========================================")
+            print("Пожалуйста, завершите вход в Facebook в открывшемся браузере.")
+            print("Если Facebook потребует подтверждения, двухфакторной аутентификации или капчи — всё это нужно сделать вручную.")
+            print("Вам нужно самостоятельно нажать кнопку 'Вход'!")
+            input("После успешного входа в аккаунт и появления ленты нажмите Enter для продолжения...")
+            print("=========================================\n")
+
+            # Даем время на загрузку ленты после ручного входа
             await self.page.wait_for_timeout(3000)
-            
-            # Проверяем различные индикаторы успешного входа
-            success_indicators = [
-                # Отсутствие формы входа
-                lambda: self.page.query_selector('input[name="email"]') is None,
-                # Наличие элементов авторизованного пользователя
-                lambda: self.page.query_selector('[aria-label*="Account"]') is not None,
-                lambda: self.page.query_selector('[data-testid="blue_bar"]') is not None,
-            ]
-            
+
+            # Проверяем успешность входа
             is_logged_in = False
-            for check in success_indicators:
-                try:
-                    if await check():
-                        is_logged_in = True
-                        break
-                except:
-                    continue
-            
+
+            # 1. Нет поля email – значит, авторизация успешна
+            email_field = await self.page.query_selector('input[name="email"]')
+            if email_field is None:
+                is_logged_in = True
+
+            # 2. Есть признаки авторизованного пользователя
+            account_elem = await self.page.query_selector('[aria-label*="Account"]')
+            blue_bar = await self.page.query_selector('[data-testid="blue_bar"]')
+            if account_elem is not None or blue_bar is not None:
+                is_logged_in = True
+
             if is_logged_in and 'facebook.com' in self.page.url and 'login' not in self.page.url:
                 self.logger.info("✅ Успешная авторизация")
                 self.scraper_logger.info(f"Пользователь {email} успешно авторизован")
-                
+
                 # Сохраняем куки после успешной авторизации
                 await self.cookie_manager.save_cookies(self.context)
                 return True
@@ -401,7 +929,7 @@ class FacebookScraper:
                 self.logger.error("❌ Ошибка авторизации")
                 self.error_logger.error(f"Неудачная попытка авторизации для {email}")
                 return False
-                
+
         except Exception as e:
             self.error_logger.error(f"Исключение при авторизации {email}: {e}")
             self.logger.error(f"❌ Ошибка при авторизации: {e}")
@@ -414,62 +942,111 @@ class FacebookScraper:
             self.scraper_logger.info(f"Начинаем извлечение комментариев ({'модальное окно' if modal else 'страница'})")
             print(f"\033[94mИщем комментарии ({'в модальном окне' if modal else 'на странице'})...\033[0m")
             
-            comment_selectors = await self.dom_analyzer.get_selectors('comment')
+            # Расширенные селекторы для комментариев
+            comment_container_selectors = [
+                '[data-testid="UFI2Comment/root"]',
+                '[role="article"]',
+                'div[aria-label*="Comment"]',
+                'div[data-testid*="comment"]',
+                'div[data-ad-comet-preview*="comment"]',
+                # Дополнительные селекторы
+                'div[data-testid="story-subtitle"]',
+                'div[data-testid="post_message"]',
+                'div[dir="auto"]:has(strong)',
+                'div:has(> div > div > strong)',
+                'div:has(span[dir="auto"])'
+            ]
             
-            if modal:
-                comment_containers = await page.query_selector_all(
-                    f'[role="dialog"] {comment_selectors["container"]}, '
-                    f'div[aria-modal="true"] {comment_selectors["container"]}'
-                )
-            else:
-                comment_containers = await page.query_selector_all(comment_selectors['container'])
+            all_containers = []
             
-            self.scraper_logger.info(f"Найдено контейнеров комментариев: {len(comment_containers)}")
-            print(f"\033[92mНайдено контейнеров комментариев: {len(comment_containers)}\033[0m")
-            
-            for i, container in enumerate(comment_containers):
+            # Пробуем каждый селектор
+            for selector in comment_container_selectors:
                 try:
-                    # Извлекаем автора
-                    author_element = await container.query_selector(comment_selectors['author'])
-                    author = await author_element.inner_text() if author_element else "Неизвестный автор"
+                    if modal:
+                        containers = await page.query_selector_all(f'[role="dialog"] {selector}, div[aria-modal="true"] {selector}')
+                    else:
+                        containers = await page.query_selector_all(selector)
                     
-                    # Извлекаем текст комментария
-                    text_element = await container.query_selector(comment_selectors['text'])
-                    text = await text_element.inner_text() if text_element else ""
+                    if containers:
+                        all_containers.extend(containers)
+                        print(f"\033[93mСелектор '{selector}' нашел {len(containers)} элементов\033[0m")
+                        self.scraper_logger.info(f"Селектор '{selector}' нашел {len(containers)} элементов")
+                except Exception as e:
+                    print(f"\033[91mОшибка с селектором '{selector}': {e}\033[0m")
+                    continue
+            
+            # Убираем дубликаты
+            unique_containers = []
+            seen_elements = set()
+            
+            for container in all_containers:
+                try:
+                    # Используем innerHTML как уникальный идентификатор
+                    html_content = await container.inner_html()
+                    html_hash = hash(html_content[:200])  # Первые 200 символов для уникальности
                     
-                    # Извлекаем временную метку
-                    timestamp_element = await container.query_selector(comment_selectors['timestamp'])
-                    timestamp = ""
-                    if timestamp_element:
-                        timestamp = await timestamp_element.get_attribute('data-utime')
-                        if not timestamp:
-                            timestamp = await timestamp_element.inner_text()
+                    if html_hash not in seen_elements:
+                        seen_elements.add(html_hash)
+                        unique_containers.append(container)
+                except:
+                    continue
+            
+            print(f"\033[92mВсего уникальных контейнеров: {len(unique_containers)}\033[0m")
+            self.scraper_logger.info(f"Всего уникальных контейнеров: {len(unique_containers)}")
+            
+            # Обрабатываем каждый контейнер
+            for i, container in enumerate(unique_containers):
+                try:
+                    print(f"\033[94mОбрабатываем контейнер {i+1}/{len(unique_containers)}\033[0m")
                     
-                    # Извлекаем количество лайков
-                    likes = 0
-                    likes_element = await container.query_selector(comment_selectors['likes'])
-                    if likes_element:
-                        likes_text = await likes_element.get_attribute('aria-label') or ""
-                        import re
-                        likes_match = re.search(r'(\d+)', likes_text)
-                        if likes_match:
-                            likes = int(likes_match.group(1))
+                    # Получаем весь HTML контейнера для анализа
+                    container_html = await container.inner_html()
+                    container_text = await container.inner_text()
                     
-                    if text.strip():
+                    # Отладочная информация
+                    print(f"\033[93mКонтейнер {i+1} содержит {len(container_text)} символов текста\033[0m")
+                    
+                    # Если контейнер слишком мал, пропускаем
+                    if len(container_text.strip()) < 10:
+                        print(f"\033[91mКонтейнер {i+1} слишком мал, пропускаем\033[0m")
+                        continue
+                    
+                    # Ищем автора более гибко
+                    author = await self.extract_author_from_container(container)
+                    
+                    # Ищем текст комментария более гибко
+                    comment_text = await self.extract_text_from_container(container)
+                    
+                    # Ищем временную метку
+                    timestamp = await self.extract_timestamp_from_container(container)
+                    
+                    # Ищем лайки
+                    likes = await self.extract_likes_from_container(container)
+                    
+                    print(f"\033[96mАвтор: {author[:50]}...\033[0m")
+                    print(f"\033[96mТекст: {comment_text[:100]}...\033[0m")
+                    print(f"\033[96mВремя: {timestamp}\033[0m")
+                    print(f"\033[96mЛайки: {likes}\033[0m")
+                    print("-" * 50)
+                    
+                    # Если есть осмысленный контент, добавляем комментарий
+                    if comment_text.strip() and len(comment_text.strip()) > 5:
                         comment = Comment(
-                            author=author.strip(),
-                            text=text.strip(),
-                            timestamp=timestamp,
+                            author=author or "Неизвестный автор",
+                            text=comment_text.strip(),
+                            timestamp=timestamp or "",
                             likes=likes
                         )
                         comments.append(comment)
                         
-                        self.scraper_logger.info(f"Извлечен комментарий от {author[:30]}: {text[:50]}...")
-                        print(f"\033[93mКомментарий {i+1}: {author[:30]}... | {text[:50]}...\033[0m")
-                
+                        self.scraper_logger.info(f"Извлечен комментарий от {author}: {comment_text[:50]}...")
+                        print(f"\033[92m✓ Добавлен комментарий от {author}\033[0m")
+                    else:
+                        print(f"\033[91m✗ Пропущен контейнер {i+1} - недостаточно данных\033[0m")
+                    
                 except Exception as e:
-                    self.error_logger.error(f"Ошибка при обработке комментария {i+1}: {e}")
-                    print(f"\033[91mОшибка при обработке комментария {i+1}: {e}\033[0m")
+                    self.error_logger.error(f"Ошибка при обработке контейнера {i+1}: {e}")
+                    print(f"\033[91mОшибка при обработке контейнера {i+1}: {e}\033[0m")
                     continue
             
             self.scraper_logger.info(f"Всего извлечено комментариев: {len(comments)}")
@@ -480,7 +1057,165 @@ class FacebookScraper:
             print(f"\033[91mОшибка при извлечении комментариев: {e}\033[0m")
         
         return comments
+    async def extract_author_from_container(self, container) -> str:
+        """Извлекает автора из контейнера комментария"""
+        author_selectors = [
+            'strong:first-child',
+            'strong',
+            'h3 a',
+            'a[role="link"]',
+            'span[dir="auto"] strong',
+            'div[data-testid*="actor"] a',
+            'div[data-testid*="name"] a',
+            'a[href*="/user/"]',
+            'a[href*="/profile.php"]',
+            'a:first-child',
+            'span:first-child strong'
+        ]
+        
+        for selector in author_selectors:
+            try:
+                author_element = await container.query_selector(selector)
+                if author_element:
+                    author_text = await author_element.inner_text()
+                    if author_text and len(author_text.strip()) > 0:
+                        return author_text.strip()
+            except:
+                continue
+        
+        # Если не нашли автора через селекторы, пробуем найти первый жирный текст
+        try:
+            all_text = await container.inner_text()
+            lines = all_text.split('\n')
+            for line in lines[:3]:  # Проверяем первые 3 строки
+                if line.strip() and len(line.strip()) < 100:  # Имя обычно короткое
+                    return line.strip()
+        except:
+            pass
+        
+        return "Неизвестный автор"
 
+    async def extract_text_from_container(self, container) -> str:
+        """Извлекает текст комментария из контейнера"""
+        text_selectors = [
+            'div[data-testid="UFI2CommentBodyText"]',
+            'div[dir="auto"]:not([role="button"]):not(:has(strong:first-child))',
+            'span[dir="auto"]:not(:has(strong))',
+            'div[data-ad-comet-preview="message"]',
+            'div[data-testid="post_message"]',
+            'div:not([role="button"]):not([data-testid*="button"])',
+            'span:not([role="button"])'
+        ]
+        
+        # Сначала пробуем специфичные селекторы
+        for selector in text_selectors:
+            try:
+                text_elements = await container.query_selector_all(selector)
+                for element in text_elements:
+                    text = await element.inner_text()
+                    if text and len(text.strip()) > 10:  # Достаточно длинный текст
+                        return text.strip()
+            except:
+                continue
+        
+        # Если не нашли через селекторы, берем весь текст и фильтруем
+        try:
+            all_text = await container.inner_text()
+            lines = all_text.split('\n')
+            
+            # Ищем строки, которые выглядят как комментарии
+            for line in lines:
+                line = line.strip()
+                if (len(line) > 10 and 
+                    not line.isdigit() and  # Не число
+                    'like' not in line.lower() and 
+                    'reply' not in line.lower() and
+                    'час' not in line.lower() and
+                    'мин' not in line.lower() and
+                    'day' not in line.lower() and
+                    'ago' not in line.lower()):
+                    return line
+        except:
+            pass
+        
+        return ""
+
+    async def extract_timestamp_from_container(self, container) -> str:
+        """Извлекает временную метку из контейнера"""
+        timestamp_selectors = [
+            'abbr[data-utime]',
+            'time',
+            'a[role="link"][tabindex="0"]',
+            'span:contains("час")',
+            'span:contains("мин")',
+            'span:contains("ago")',
+            'span:contains("day")'
+        ]
+        
+        for selector in timestamp_selectors:
+            try:
+                timestamp_element = await container.query_selector(selector)
+                if timestamp_element:
+                    # Пробуем получить data-utime
+                    timestamp = await timestamp_element.get_attribute('data-utime')
+                    if timestamp:
+                        return timestamp
+                    
+                    # Если нет data-utime, берем текст
+                    timestamp_text = await timestamp_element.inner_text()
+                    if timestamp_text:
+                        return timestamp_text.strip()
+            except:
+                continue
+        
+        # Ищем в тексте паттерны времени
+        try:
+            all_text = await container.inner_text()
+            import re
+            time_patterns = [
+                r'\d+\s*(час|hours?|h)\s*назад',
+                r'\d+\s*(мин|minutes?|min|m)\s*назад',
+                r'\d+\s*(day|days?|d)\s*ago',
+                r'\d+[hm]',
+                r'Yesterday',
+                r'Вчера'
+            ]
+            
+            for pattern in time_patterns:
+                match = re.search(pattern, all_text, re.IGNORECASE)
+                if match:
+                    return match.group(0)
+        except:
+            pass
+        
+        return ""
+
+    async def extract_likes_from_container(self, container) -> int:
+        """Извлекает количество лайков из контейнера"""
+        likes_selectors = [
+            '[aria-label*="reaction"]',
+            '[aria-label*="like"]',
+            '[aria-label*="лайк"]',
+            'button[aria-label*="Like"]',
+            'span:contains("Like")',
+            'span:contains("лайк")'
+        ]
+        
+        for selector in likes_selectors:
+            try:
+                likes_element = await container.query_selector(selector)
+                if likes_element:
+                    aria_label = await likes_element.get_attribute('aria-label') or ""
+                    
+                    # Ищем числа в aria-label
+                    import re
+                    likes_match = re.search(r'(\d+)', aria_label)
+                    if likes_match:
+                        return int(likes_match.group(1))
+            except:
+                continue
+        
+        return 0
     async def click_view_more_comments(self, page: Page, max_attempts: int = 5) -> bool:
         """Нажимаем на кнопки 'Показать еще комментарии'"""
         attempts = 0
@@ -621,29 +1356,58 @@ class FacebookScraper:
 
 # Пример использования
 async def main():
-    scraper = FacebookScraper(headless=False, cookies_file="facebook_cookies.json")
-    
     try:
+        # Получаем настройки через интерактивный диалог
+        config = get_interactive_config()
+        
+        print("\n🚀 Запускаем Facebook Scraper...")
+        
+        # Создаем экземпляр скрапера
+        scraper = FacebookScraper(
+            headless=False, 
+            cookies_file="facebook_cookies.json"
+        )
+        
+        # Настраиваем уровень логирования
+        logging.getLogger().setLevel(getattr(logging, config['output']['log_level']))
+        
         await scraper.start_browser()
         
-        # Авторизация (замените на ваши данные)
-        email = " "
-        password = " "
+        # Авторизация
+        print("\n🔐 Выполняем вход в Facebook...")
+        if not await scraper.login(config['auth']['email'], config['auth']['password']):
+            print("❌ Ошибка авторизации. Завершение работы.")
+            return
         
-        if await scraper.login(email, password):
-            # URL поста для скрапинга
-            post_url = "https://www.facebook.com/groups/1075275215820713"
-            
-            # Скрапинг комментариев
-            results = await scraper.scrape_post_comments(post_url)
-            
-            # Сохранение результатов
-            await scraper.save_results(results)
-            
+        print("✅ Успешная авторизация!")
+        
+        # Парсинг в зависимости от режима
+        if config['mode'] == 'single_post':
+            print(f"\n📄 Парсим один пост: {config['url']}")
+            results = await scraper.scrape_post_comments(config['url'])
+        else:
+            print(f"\n📚 Парсим {config['posts_count']} постов из: {config['url']}")
+            # Здесь нужно будет добавить методы для парсинга множественных постов
+            # results = await scraper.scrape_multiple_posts(config)
+            results = {"message": "Функция парсинга множественных постов будет добавлена"}
+        
+        # Сохранение результатов
+        print(f"\n💾 Сохраняем результаты в {config['output']['filename']}...")
+        await scraper.save_results(results, config['output']['filename'])
+        
+        if config['output']['save_csv']:
+            print("📄 Экспорт в CSV...")
+            # Добавить функцию экспорта в CSV
+        
+        print("\n🎉 Парсинг успешно завершен!")
+        
     except Exception as e:
+        print(f"\n❌ Критическая ошибка: {e}")
         logging.getLogger('errors').error(f"Критическая ошибка в main: {e}")
-        print(f"\033[91mКритическая ошибка: {e}\033[0m")
         sys.exit(1)
+    finally:
+        if 'scraper' in locals():
+            await scraper.close_browser()
 
 if __name__ == "__main__":
     asyncio.run(main())

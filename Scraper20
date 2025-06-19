@@ -1,0 +1,649 @@
+import asyncio
+import logging
+import json
+import time
+import os
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page, TimeoutError
+from dataclasses import dataclass, field
+
+# Настройка логирования
+def setup_logging():
+    """Настройка системы логирования"""
+    # Создаем директорию для логов если её нет
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+    
+    # Настройка форматирования
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    date_format = '%Y-%m-%d %H:%M:%S'
+    
+    # Настройка основного логгера
+    logging.basicConfig(
+        level=logging.INFO,
+        format=log_format,
+        datefmt=date_format,
+        handlers=[
+            logging.FileHandler('logs/facebook_scraper.log', encoding='utf-8'),
+            logging.StreamHandler()
+        ]
+    )
+    
+    # Отдельный логгер для куки
+    cookie_logger = logging.getLogger('cookies')
+    cookie_handler = logging.FileHandler('logs/cookies.log', encoding='utf-8')
+    cookie_handler.setFormatter(logging.Formatter(log_format, date_format))
+    cookie_logger.addHandler(cookie_handler)
+    cookie_logger.setLevel(logging.INFO)
+    
+    # Отдельный логгер для скрапинга
+    scraper_logger = logging.getLogger('scraper')
+    scraper_handler = logging.FileHandler('logs/scraper_activity.log', encoding='utf-8')
+    scraper_handler.setFormatter(logging.Formatter(log_format, date_format))
+    scraper_logger.addHandler(scraper_handler)
+    scraper_logger.setLevel(logging.INFO)
+    
+    # Логгер для ошибок
+    error_logger = logging.getLogger('errors')
+    error_handler = logging.FileHandler('logs/errors.log', encoding='utf-8')
+    error_handler.setFormatter(logging.Formatter(log_format, date_format))
+    error_logger.addHandler(error_handler)
+    error_logger.setLevel(logging.ERROR)
+    
+    return {
+        'main': logging.getLogger(__name__),
+        'cookies': cookie_logger,
+        'scraper': scraper_logger,
+        'errors': error_logger
+    }
+
+@dataclass
+class Comment:
+    author: str
+    text: str
+    timestamp: str
+    likes: int = 0
+    replies: List['Comment'] = field(default_factory=list)
+
+@dataclass
+class Post:
+    author: str
+    text: str
+    timestamp: str
+    likes: int = 0
+    comments_count: int = 0
+    shares: int = 0
+    reactions: Dict[str, int] = field(default_factory=dict)
+    comments: List[Comment] = field(default_factory=list)
+
+class CookieManager:
+    """Менеджер для работы с куки"""
+    
+    def __init__(self, cookies_file: str = "facebook_cookies.json"):
+        self.cookies_file = cookies_file
+        self.logger = logging.getLogger('cookies')
+        
+    async def save_cookies(self, context: BrowserContext) -> bool:
+        """Сохранение куки в файл"""
+        try:
+            cookies = await context.cookies()
+            
+            # Создаем директорию если её нет
+            cookies_dir = os.path.dirname(self.cookies_file) if os.path.dirname(self.cookies_file) else '.'
+            if not os.path.exists(cookies_dir):
+                os.makedirs(cookies_dir)
+            
+            with open(self.cookies_file, 'w', encoding='utf-8') as f:
+                json.dump(cookies, f, indent=2, ensure_ascii=False)
+            
+            self.logger.info(f"✅ Куки сохранены в файл: {self.cookies_file} (количество: {len(cookies)})")
+            
+            # Логируем основные куки для отладки
+            important_cookies = [cookie for cookie in cookies if cookie['name'] in ['c_user', 'xs', 'sb', 'datr']]
+            for cookie in important_cookies:
+                self.logger.info(f"Сохранена куки: {cookie['name']} для домена {cookie['domain']}")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка при сохранении куки: {e}")
+            return False
+    
+    async def load_cookies(self, context: BrowserContext) -> bool:
+        """Загрузка куки из файла"""
+        try:
+            if not os.path.exists(self.cookies_file):
+                self.logger.warning(f"⚠️ Файл куки не найден: {self.cookies_file}")
+                return False
+            
+            with open(self.cookies_file, 'r', encoding='utf-8') as f:
+                cookies = json.load(f)
+            
+            if not cookies:
+                self.logger.warning("⚠️ Файл куки пуст")
+                return False
+            
+            await context.add_cookies(cookies)
+            self.logger.info(f"✅ Куки загружены из файла: {self.cookies_file} (количество: {len(cookies)})")
+            
+            # Логируем основные куки для отладки
+            important_cookies = [cookie for cookie in cookies if cookie['name'] in ['c_user', 'xs', 'sb', 'datr']]
+            for cookie in important_cookies:
+                self.logger.info(f"Загружена куки: {cookie['name']} для домена {cookie['domain']}")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка при загрузке куки: {e}")
+            return False
+    
+    def cookies_exist(self) -> bool:
+        """Проверка существования файла куки"""
+        exists = os.path.exists(self.cookies_file)
+        self.logger.info(f"Проверка куки файла {self.cookies_file}: {'существует' if exists else 'не найден'}")
+        return exists
+    
+    async def validate_cookies(self, page: Page) -> bool:
+        """Проверка валидности куки через переход на Facebook"""
+        try:
+            self.logger.info("🔍 Проверяем валидность куки...")
+            
+            await page.goto('https://www.facebook.com', wait_until='networkidle')
+            await page.wait_for_timeout(3000)
+            
+            # Проверяем, авторизованы ли мы
+            login_indicators = [
+                'input[name="email"]',  # Поле ввода email на странице входа
+                'input[data-testid="royal_email"]'  # Альтернативное поле
+            ]
+            
+            is_logged_out = False
+            for indicator in login_indicators:
+                if await page.query_selector(indicator):
+                    is_logged_out = True
+                    break
+            
+            if is_logged_out:
+                self.logger.warning("⚠️ Куки невалидны - требуется авторизация")
+                return False
+            else:
+                self.logger.info("✅ Куки валидны - пользователь авторизован")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка при проверке куки: {e}")
+            return False
+
+class FacebookDOMAnalyzer:
+    def __init__(self):
+        self.logger = logging.getLogger('scraper')
+    
+    async def get_selectors(self, selector_type: str) -> Dict[str, str]:
+        """Возвращает селекторы для различных элементов Facebook"""
+        selectors = {
+            'post': {
+                'container': '[data-pagelet="FeedUnit_0"], [role="article"], div[data-testid="fbfeed_story"]',
+                'author': '[data-testid="story-subtitle"] a, [data-ad-comet-preview="message"] a',
+                'content': '[data-testid="post_message"], [data-ad-comet-preview="message"]',
+                'timestamp': 'abbr[data-utime], time',
+                'likes': '[aria-label*="reactions"], [aria-label*="лайк"]',
+                'comments': '[aria-label*="comment"], [aria-label*="коммент"]',
+                'shares': '[aria-label*="share"], [aria-label*="поделил"]'
+            },
+            'comment': {
+                'container': '[role="article"], div[aria-label*="Comment"], div[data-testid="UFI2Comment/root"]',
+                'author': 'strong a, [data-testid="UFI2CommentActorName"] a, h3 a',
+                'text': '[data-testid="UFI2CommentBodyText"], div[dir="auto"]:not([role="button"])',
+                'timestamp': 'abbr, time, a[role="link"][tabindex="0"]',
+                'likes': '[aria-label*="reactions"], button[aria-label*="лайк"], [aria-label*="Like"]',
+                'replies': '[aria-label*="replies"], [aria-label*="ответ"]'
+            },
+            'modal': {
+                'container': '[role="dialog"], div[aria-modal="true"]',
+                'close': '[aria-label="Close"], button[aria-label="Закрыть"], [aria-label*="close"]',
+                'comments_section': '[aria-label*="Comments"], div[data-testid="UFI2CommentsCount"]',
+                'content': '[role="dialog"] [data-testid="post_message"], div[aria-modal="true"] [data-ad-comet-preview="message"]'
+            }
+        }
+        return selectors.get(selector_type, {})
+
+    async def analyze_modal(self, page: Page) -> Dict[str, Any]:
+        """Анализирует модальное окно и возвращает информацию о его содержимом"""
+        try:
+            modal_selector = '[role="dialog"], div[aria-modal="true"]'
+            modal = await page.query_selector(modal_selector)
+            
+            if not modal:
+                return {"is_modal": False, "type": None}
+            
+            modal_type = "unknown"
+            
+            # Проверяем тип модального окна
+            comments_indicators = [
+                '[aria-label*="Comments"]',
+                'div[data-testid="UFI2CommentsCount"]',
+                'h2:has-text("Comments")',
+                'h2:has-text("Комментарии")',
+                '[data-testid="UFI2Comment/root"]'
+            ]
+            
+            for indicator in comments_indicators:
+                if await page.query_selector(indicator):
+                    modal_type = "comments"
+                    break
+            
+            media_indicators = [
+                'img[data-testid="photo"]',
+                'video',
+                '[aria-label*="Photo"]',
+                '[aria-label*="Video"]',
+                'div[data-testid="media-viewer"]'
+            ]
+            
+            for indicator in media_indicators:
+                if await page.query_selector(indicator):
+                    modal_type = "media" if modal_type == "unknown" else f"{modal_type}_media"
+                    break
+            
+            has_comments_section = any(await modal.query_selector(indicator) for indicator in comments_indicators)
+            
+            self.logger.info(f"📱 Обнаружено модальное окно типа: {modal_type}")
+            
+            return {
+                "is_modal": True,
+                "type": modal_type,
+                "has_comments": has_comments_section,
+                "modal_element": modal,
+                "selectors": await self.get_selectors('modal')
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка при анализе модального окна: {e}")
+            logging.getLogger('errors').error(f"Ошибка анализа модального окна: {e}")
+            return {"is_modal": False, "type": None, "error": str(e)}
+
+class FacebookScraper:
+    def __init__(self, headless: bool = True, cookies_file: str = "cookies.json"):
+        self.headless = headless
+        self.browser: Optional[Browser] = None
+        self.context: Optional[BrowserContext] = None
+        self.page: Optional[Page] = None
+        
+        # Настройка логирования
+        self.loggers = setup_logging()
+        self.logger = self.loggers['main']
+        self.scraper_logger = self.loggers['scraper']
+        self.error_logger = self.loggers['errors']
+        
+        # Менеджеры
+        self.cookie_manager = CookieManager(cookies_file)
+        self.dom_analyzer = FacebookDOMAnalyzer()
+        
+        self.logger.info("🚀 Инициализация FacebookScraper")
+
+    async def start_browser(self):
+        """Запуск браузера с восстановлением сессии"""
+        try:
+            self.logger.info("🌐 Запуск браузера...")
+            
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                headless=self.headless,
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor'
+                ]
+            )
+            
+            self.context = await self.browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            
+            self.page = await self.context.new_page()
+            
+            # Пытаемся загрузить сохраненные куки
+            if self.cookie_manager.cookies_exist():
+                if await self.cookie_manager.load_cookies(self.context):
+                    # Проверяем валидность куки
+                    if await self.cookie_manager.validate_cookies(self.page):
+                        self.logger.info("✅ Сессия восстановлена из куки")
+                        return True
+                    else:
+                        self.logger.warning("⚠️ Куки устарели, требуется повторная авторизация")
+            
+            self.logger.info("✅ Браузер успешно запущен")
+            return True
+            
+        except Exception as e:
+            self.error_logger.error(f"Ошибка запуска браузера: {e}")
+            self.logger.error(f"❌ Ошибка запуска браузера: {e}")
+            raise
+
+    async def close_browser(self):
+        """Закрытие браузера с сохранением сессии"""
+        try:
+            # Сохраняем куки перед закрытием
+            if self.context:
+                await self.cookie_manager.save_cookies(self.context)
+            
+            if self.page:
+                await self.page.close()
+            if self.context:
+                await self.context.close()
+            if self.browser:
+                await self.browser.close()
+            if hasattr(self, 'playwright'):
+                await self.playwright.stop()
+                
+            self.logger.info("✅ Браузер закрыт, сессия сохранена")
+            
+        except Exception as e:
+            self.error_logger.error(f"Ошибка при закрытии браузера: {e}")
+            self.logger.error(f"❌ Ошибка при закрытии браузера: {e}")
+
+    async def login(self, email: str, password: str) -> bool:
+        """Авторизация в Facebook с сохранением сессии"""
+        try:
+            self.logger.info(f"🔐 Начинаем авторизацию для {email}")
+            
+            # Проверяем, не авторизованы ли мы уже
+            await self.page.goto('https://www.facebook.com', wait_until='networkidle')
+            
+            # Если есть поле для входа, значит не авторизованы
+            email_field = await self.page.query_selector('input[name="email"]')
+            if not email_field:
+                self.logger.info("✅ Пользователь уже авторизован")
+                return True
+            
+            # Выполняем авторизацию
+            self.logger.info("📝 Вводим учетные данные")
+            await self.page.fill('input[name="email"]', email)
+            await self.page.fill('input[name="pass"]', password)
+            
+            # Нажимаем кнопку входа
+            await self.page.click('button[name="login"]')
+            await self.page.wait_for_load_state('networkidle')
+            
+            # Проверяем успешность входа
+            await self.page.wait_for_timeout(3000)
+            
+            # Проверяем различные индикаторы успешного входа
+            success_indicators = [
+                # Отсутствие формы входа
+                lambda: self.page.query_selector('input[name="email"]') is None,
+                # Наличие элементов авторизованного пользователя
+                lambda: self.page.query_selector('[aria-label*="Account"]') is not None,
+                lambda: self.page.query_selector('[data-testid="blue_bar"]') is not None,
+            ]
+            
+            is_logged_in = False
+            for check in success_indicators:
+                try:
+                    if await check():
+                        is_logged_in = True
+                        break
+                except:
+                    continue
+            
+            if is_logged_in and 'facebook.com' in self.page.url and 'login' not in self.page.url:
+                self.logger.info("✅ Успешная авторизация")
+                self.scraper_logger.info(f"Пользователь {email} успешно авторизован")
+                
+                # Сохраняем куки после успешной авторизации
+                await self.cookie_manager.save_cookies(self.context)
+                return True
+            else:
+                self.logger.error("❌ Ошибка авторизации")
+                self.error_logger.error(f"Неудачная попытка авторизации для {email}")
+                return False
+                
+        except Exception as e:
+            self.error_logger.error(f"Исключение при авторизации {email}: {e}")
+            self.logger.error(f"❌ Ошибка при авторизации: {e}")
+            return False
+
+    async def extract_full_comments(self, page: Page, modal: bool = False) -> List[Comment]:
+        """Извлекаем все комментарии со страницы или из модального окна"""
+        comments = []
+        try:
+            self.scraper_logger.info(f"Начинаем извлечение комментариев ({'модальное окно' if modal else 'страница'})")
+            print(f"\033[94mИщем комментарии ({'в модальном окне' if modal else 'на странице'})...\033[0m")
+            
+            comment_selectors = await self.dom_analyzer.get_selectors('comment')
+            
+            if modal:
+                comment_containers = await page.query_selector_all(
+                    f'[role="dialog"] {comment_selectors["container"]}, '
+                    f'div[aria-modal="true"] {comment_selectors["container"]}'
+                )
+            else:
+                comment_containers = await page.query_selector_all(comment_selectors['container'])
+            
+            self.scraper_logger.info(f"Найдено контейнеров комментариев: {len(comment_containers)}")
+            print(f"\033[92mНайдено контейнеров комментариев: {len(comment_containers)}\033[0m")
+            
+            for i, container in enumerate(comment_containers):
+                try:
+                    # Извлекаем автора
+                    author_element = await container.query_selector(comment_selectors['author'])
+                    author = await author_element.inner_text() if author_element else "Неизвестный автор"
+                    
+                    # Извлекаем текст комментария
+                    text_element = await container.query_selector(comment_selectors['text'])
+                    text = await text_element.inner_text() if text_element else ""
+                    
+                    # Извлекаем временную метку
+                    timestamp_element = await container.query_selector(comment_selectors['timestamp'])
+                    timestamp = ""
+                    if timestamp_element:
+                        timestamp = await timestamp_element.get_attribute('data-utime')
+                        if not timestamp:
+                            timestamp = await timestamp_element.inner_text()
+                    
+                    # Извлекаем количество лайков
+                    likes = 0
+                    likes_element = await container.query_selector(comment_selectors['likes'])
+                    if likes_element:
+                        likes_text = await likes_element.get_attribute('aria-label') or ""
+                        import re
+                        likes_match = re.search(r'(\d+)', likes_text)
+                        if likes_match:
+                            likes = int(likes_match.group(1))
+                    
+                    if text.strip():
+                        comment = Comment(
+                            author=author.strip(),
+                            text=text.strip(),
+                            timestamp=timestamp,
+                            likes=likes
+                        )
+                        comments.append(comment)
+                        
+                        self.scraper_logger.info(f"Извлечен комментарий от {author[:30]}: {text[:50]}...")
+                        print(f"\033[93mКомментарий {i+1}: {author[:30]}... | {text[:50]}...\033[0m")
+                
+                except Exception as e:
+                    self.error_logger.error(f"Ошибка при обработке комментария {i+1}: {e}")
+                    print(f"\033[91mОшибка при обработке комментария {i+1}: {e}\033[0m")
+                    continue
+            
+            self.scraper_logger.info(f"Всего извлечено комментариев: {len(comments)}")
+            print(f"\033[92mВсего извлечено комментариев: {len(comments)}\033[0m")
+            
+        except Exception as e:
+            self.error_logger.error(f"Ошибка при извлечении комментариев: {e}")
+            print(f"\033[91mОшибка при извлечении комментариев: {e}\033[0m")
+        
+        return comments
+
+    async def click_view_more_comments(self, page: Page, max_attempts: int = 5) -> bool:
+        """Нажимаем на кнопки 'Показать еще комментарии'"""
+        attempts = 0
+        clicked_any = False
+        
+        view_more_selectors = [
+            'div[role="button"]:has-text("View more comments")',
+            'div[role="button"]:has-text("Показать еще")',
+            'span:has-text("View more comments")',
+            'span:has-text("Показать еще комментарии")',
+            '[data-testid="UFI2CommentsCount/root"] div[role="button"]'
+        ]
+        
+        while attempts < max_attempts:
+            found_button = False
+            
+            for selector in view_more_selectors:
+                try:
+                    buttons = await page.query_selector_all(selector)
+                    for button in buttons:
+                        if await button.is_visible():
+                            await button.click()
+                            await page.wait_for_timeout(2000)
+                            clicked_any = True
+                            found_button = True
+                            
+                            self.scraper_logger.info(f"Нажата кнопка 'Показать еще' (попытка {attempts + 1})")
+                            print(f"\033[94m✓ Нажата кнопка 'Показать еще' (попытка {attempts + 1})\033[0m")
+                            break
+                    if found_button:
+                        break
+                except Exception as e:
+                    continue
+            
+            if not found_button:
+                break
+                
+            attempts += 1
+        
+        return clicked_any
+
+    async def scrape_post_comments(self, post_url: str) -> Dict[str, Any]:
+        """Скрапинг комментариев к конкретному посту"""
+        try:
+            self.scraper_logger.info(f"Начинаем скрапинг поста: {post_url}")
+            print(f"\033[96m=== Переходим к посту: {post_url} ===\033[0m")
+            
+            await self.page.goto(post_url)
+            await self.page.wait_for_load_state('networkidle')
+            
+            # Проверяем модальное окно
+            modal_info = await self.dom_analyzer.analyze_modal(self.page)
+            is_modal = modal_info.get('is_modal', False)
+            
+            print(f"\033[93mРежим: {'Модальное окно' if is_modal else 'Обычная страница'}\033[0m")
+            
+            # Загружаем больше комментариев
+            await self.click_view_more_comments(self.page)
+            
+            # Извлекаем комментарии
+            comments = await self.extract_full_comments(self.page, modal=is_modal)
+            
+            # Извлекаем информацию о посте
+            post_selectors = await self.dom_analyzer.get_selectors('post')
+            
+            author_element = await self.page.query_selector(post_selectors['author'])
+            author = await author_element.inner_text() if author_element else "Неизвестный автор"
+            
+            content_element = await self.page.query_selector(post_selectors['content'])
+            content = await content_element.inner_text() if content_element else ""
+            
+            timestamp_element = await self.page.query_selector(post_selectors['timestamp'])
+            timestamp = ""
+            if timestamp_element:
+                timestamp = await timestamp_element.get_attribute('data-utime') or await timestamp_element.inner_text()
+            
+            post = Post(
+                author=author,
+                text=content,
+                timestamp=timestamp,
+                comments=comments,
+                comments_count=len(comments)
+            )
+            
+            result = {
+                'post': post,
+                'url': post_url,
+                'scraped_at': datetime.now().isoformat(),
+                'total_comments': len(comments),
+                'is_modal': is_modal
+            }
+            
+            self.scraper_logger.info(f"Скрапинг завершен. URL: {post_url}, комментариев: {len(comments)}")
+            print(f"\033[92m✓ Скрапинг завершен. Найдено комментариев: {len(comments)}\033[0m")
+            
+            return result
+            
+        except Exception as e:
+            self.error_logger.error(f"Ошибка при скрапинге поста {post_url}: {e}")
+            self.logger.error(f"❌ Ошибка при скрапинге поста {post_url}: {e}")
+            return {'error': str(e), 'url': post_url}
+
+    async def save_results(self, results: Dict[str, Any], filename: str = None):
+        """Сохранение результатов в JSON файл"""
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"results/facebook_comments_{timestamp}.json"
+        
+        try:
+            # Создаем директорию если её нет
+            results_dir = os.path.dirname(filename) if os.path.dirname(filename) else '.'
+            if not os.path.exists(results_dir):
+                os.makedirs(results_dir)
+            
+            # Конвертируем dataclass объекты в словари
+            serializable_results = self._make_serializable(results)
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(serializable_results, f, ensure_ascii=False, indent=2)
+            
+            self.scraper_logger.info(f"Результаты сохранены в файл: {filename}")
+            print(f"\033[92m✓ Результаты сохранены в файл: {filename}\033[0m")
+            
+        except Exception as e:
+            self.error_logger.error(f"Ошибка при сохранении результатов: {e}")
+            self.logger.error(f"❌ Ошибка при сохранении результатов: {e}")
+
+    def _make_serializable(self, obj):
+        """Преобразование объектов в сериализуемый формат"""
+        if isinstance(obj, (Post, Comment)):
+            return obj.__dict__
+        elif isinstance(obj, dict):
+            return {k: self._make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._make_serializable(item) for item in obj]
+        else:
+            return obj
+
+# Пример использования
+async def main():
+    scraper = FacebookScraper(headless=False, cookies_file="facebook_cookies.json")
+    
+    try:
+        await scraper.start_browser()
+        
+        # Авторизация (замените на ваши данные)
+        email = " "
+        password = " "
+        
+        if await scraper.login(email, password):
+            # URL поста для скрапинга
+            post_url = "https://www.facebook.com/groups/1075275215820713"
+            
+            # Скрапинг комментариев
+            results = await scraper.scrape_post_comments(post_url)
+            
+            # Сохранение результатов
+            await scraper.save_results(results)
+            
+    except Exception as e:
+        logging.getLogger('errors').error(f"Критическая ошибка в main: {e}")
+        print(f"\033[91mКритическая ошибка: {e}\033[0m")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -47,23 +47,25 @@ class FacebookScraper:
         return bool(re.match(pattern, url))
 
     async def load_cookies(self, context) -> None:
+        """Загружает cookies из файла перед запуском"""
         try:
-            if not self.cookies_file.exists():
-                self.logger.warning("Cookie file not found, continuing without cookies")
+            cookies_file = Path(r"C:\ScrappingVer3\facebook_cookies.json")
+            if not cookies_file.exists():
+                self.logger.warning(f"Cookie file not found at {cookies_file}, continuing without cookies")
                 return
 
-            with open(self.cookies_file, "r", encoding="utf-8") as f:
+            with open(cookies_file, "r", encoding="utf-8") as f:
                 cookie_data = json.load(f)
-            
-            # Fix for SameSite attribute: Ensure it's one of the valid values
+
+            # Fix for SameSite attribute
             for cookie in cookie_data["cookies"]:
                 if "sameSite" in cookie and cookie["sameSite"] not in ["Strict", "Lax", "None"]:
-                    cookie["sameSite"] = "Lax" # Default to Lax if invalid
+                    cookie["sameSite"] = "Lax"
                 elif "sameSite" not in cookie:
-                    cookie["sameSite"] = "Lax" # Default to Lax if missing
+                    cookie["sameSite"] = "Lax"
 
             await context.add_cookies(cookie_data["cookies"])
-            self.logger.info(f"Successfully loaded {len(cookie_data['cookies'])} cookies")
+            self.logger.info(f"Successfully loaded {len(cookie_data['cookies'])} cookies from {cookies_file}")
 
         except Exception as e:
             self.logger.error(f"Error loading cookies: {e}")
@@ -92,6 +94,8 @@ class FacebookScraper:
                 try:
                     await page.wait_for_selector(selector, timeout=10000) # Увеличиваем таймаут
                     self.logger.info(f"Login confirmed - found selector: {selector}")
+                    # Сохраняем куки сразу после успешного логина!
+                    await self.save_cookies(page.context)
                     return True
                 except:
                     continue
@@ -469,7 +473,7 @@ class FacebookScraper:
             self.logger.error(f"Error closing modal: {e}")
 
 
-     async def extract_full_comments(self, page: Page) -> list:
+    async def extract_full_comments(self, page: Page) -> list:
         """Извлекаем все комментарии с полной страницы поста"""
         comments = []
         try:
@@ -958,20 +962,18 @@ class FacebookScraper:
             self.logger.error(f"Error saving results: {e}")
             print(f"\033[91mОшибка при сохранении: {e}\033[0m")
 
-    async def save_cookies(self, page: Page) -> None:
-        """Сохраняем cookies для последующего использования"""
+    async def save_cookies(self, context) -> None:
+        """Сохраняем cookies в файл после логина"""
         try:
-            cookies = await page.context.cookies()
+            cookies = await context.cookies()
             cookie_data = {
                 "timestamp": datetime.now().isoformat(),
                 "cookies": cookies
             }
-            
-            with open(self.cookies_file, "w", encoding="utf-8") as f:
+            cookies_path = Path(r"C:\ScrappingVer3\facebook_cookies.json")
+            with open(cookies_path, "w", encoding="utf-8") as f:
                 json.dump(cookie_data, f, ensure_ascii=False, indent=2)
-            
-            self.logger.info(f"Cookies saved to: {self.cookies_file}")
-            
+            self.logger.info(f"Cookies saved to: {cookies_path}")
         except Exception as e:
             self.logger.error(f"Error saving cookies: {e}")
 

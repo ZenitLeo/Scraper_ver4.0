@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright, Browser, Page, Playwright
+from domanalyzer import domanalyzer
 import pytz
 import sys
 
@@ -15,7 +16,6 @@ class FacebookScraper:
         self.base_output_dir = Path("output")
         self.base_output_dir.mkdir(exist_ok=True)
         self.cookies_file = Path("facebook_cookies.json")
-        
         self._setup_logging()
         self._init_data_structure()
 
@@ -34,7 +34,7 @@ class FacebookScraper:
     def _init_data_structure(self) -> None:
         self.data_structure = {
             "scraper_info": {
-                "version": "4.0",
+                "version": "4.1",
                 "timestamp": self.current_date,
                 "user": self.user
             },
@@ -150,9 +150,10 @@ class FacebookScraper:
 
                 print("\033[92mЛогин подтвержден успешно! Начинаем сбор данных...\033[0m")
 
+                # Получаем актуальные селекторы для этой страницы
+                self.selectors = await facebook_dom_analyzer.get_selectors(page)
                 posts = await self.collect_posts_with_comments(page, max_posts)
                 self.data_structure["posts"] = posts
-
                 self.save_results()
 
             finally:
@@ -177,13 +178,8 @@ class FacebookScraper:
                 await page.wait_for_timeout(3000)
                 print(f"\033[94mПрокрутка страницы: {i+1}/5\033[0m")
 
-            # Более специфичные селекторы для постов (не комментариев)
-            post_selectors = [
-                'div[data-pagelet="FeedUnit"]',  # Основные посты в ленте
-                'div[role="article"]:has(div[data-ad-preview="message"])',  # Посты с контентом
-                'div.x1yztbdb:has(h3)',  # Посты с заголовками авторов
-            ]
-            
+            # Используем селекторы из dom_analyzer)
+            post_selectors = self.selectors["post_selectors"]
             post_elements = []
             for selector in post_selectors:
                 elements = await page.query_selector_all(selector)
@@ -317,18 +313,7 @@ class FacebookScraper:
         """Открываем пост и извлекаем все комментарии"""
         try:
             # Ищем элементы с текстом "comments"
-            comment_button_selectors = [
-                'span.html-span:has-text("comments")',
-                'span:has-text("comments")',
-                'span.xdj266r:has-text("comments")',
-                # Альтернативные селекторы
-                'div[role="button"]:has-text("Comment")',
-                'div[role="button"]:has-text("comment")',
-                'a[role="link"][tabindex="0"]',
-                'a[href*="/posts/"]',
-                'a[href*="story_fbid"]'
-            ]
-            
+            comment_button_selectors = self.selectors["comment_button_selectors"]            
             clicked_element = None
             for selector in comment_button_selectors:
                 try:
@@ -495,13 +480,7 @@ class FacebookScraper:
                     break
 
             # Новый приоритетный список селекторов
-            comment_selectors = [
-                'ul[role="list"] > li > div[role="article"]',
-                'ul[role="list"] li[role="article"]',
-                'div[role="article"][tabindex="0"]',
-                # fallback — если ничего не найдено, ищем просто текстовые блоки
-                'div[dir="auto"][style*="text-align"]'
-            ]
+            comment_selectors = self.selectors["comment_selectors"]
 
             found_any = False
             for selector in comment_selectors:
@@ -779,11 +758,7 @@ class FacebookScraper:
                     continue
             
             # Ищем элементы ответов
-            reply_selectors = [
-                'div[role="article"][aria-label*="Reply"]',
-                'li[data-testid="comment-list-item"] div[role="article"]',
-                'ul[role="list"] > li > div[role="article"]'
-            ]
+            reply_selectors = self.selectors["reply_selectors"]
             
             for selector in reply_selectors:
                 try:
@@ -980,7 +955,7 @@ class FacebookScraper:
 def main():
     """Основная функция для запуска скрапера"""
     print("\033[94m" + "="*60)
-    print("Facebook Scraper v4.0")  
+    print("Facebook Scraper v4.1")  
     print("="*60 + "\033[0m")
     
     try:

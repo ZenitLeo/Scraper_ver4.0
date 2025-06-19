@@ -708,6 +708,9 @@ class FacebookScraper:
             else:
                 print(f"\033[93mПроблема с извлечением: автор='{author}', контент='{content}'\033[0m")
                 return None
+        except Exception as e:
+            self.logger.error(f"Error extracting single comment: {e}")
+            return None
 
 
     
@@ -814,10 +817,7 @@ class FacebookScraper:
         
         return replies
             
-    except Exception as e:
-        self.logger.error(f"Error extracting single comment: {e}")
-        return None
-
+       
         
     async def generate_post_id(self, post_element) -> str:
         """Генерируем уникальный ID для поста"""

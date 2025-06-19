@@ -1,0 +1,1309 @@
+import asyncio
+import json
+import logging
+import re
+from datetime import datetime
+from pathlib import Path
+from playwright.async_api import async_playwright, Browser, Page, Playwright
+from domanalyzer import facebook_dom_analyzer
+import pytz
+import sys
+
+class FacebookScraper:
+    def __init__(self):
+        self.current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.user = "Savka322"
+        self.base_output_dir = Path("output")
+        self.base_output_dir.mkdir(exist_ok=True)
+        self.cookies_file = Path("facebook_cookies.json")
+        self._setup_logging()
+        self._init_data_structure()
+        self._init_selectors()
+
+    def _setup_logging(self) -> None:
+        log_file = self.base_output_dir / f"scraper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            handlers=[
+                logging.FileHandler(log_file, encoding="utf-8"),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+
+    def _init_data_structure(self) -> None:
+        self.data_structure = {
+            "scraper_info": {
+                "version": "4.2",
+                "timestamp": self.current_date,
+                "user": self.user
+            },
+            "posts": []
+        }
+
+    def _init_selectors(self) -> None:
+        """Инициализируем базовые селекторы для Facebook"""
+        self.base_selectors = {
+            "post_selectors": [
+                'div[role="article"]',
+                'div[data-pagelet="FeedUnit"]',
+                'div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z',
+                'div[data-testid="fbfeed_story"]'
+            ],
+            "comment_button_selectors": [
+                'div[role="button"][aria-label*="comment"]',
+                'div[role="button"]:has-text("comment")',
+                'span:has-text("comment")',
+                'a[role="link"]:has-text("comment")',
+                'div.x1i10h5g.xjqpnuy.xa49m3k.xqeqjp1.x2hbi6w.x9f619.x1ypdohk.xe8uvvx.xdj266r.x11i5rnm.xat24cr.x1mh8g0r.x2lwn1j.xeuugli.x16tdsg8.xggy1nq.x1ja2u2z.x6s0dn4.x1ejq31n.xd10rxx.x1sy0etr.x17r0tee.x3nfvp2.xdl72j9.x1q0g3np.x2lah0s.x193iq5w.x1n2onr6.x1hl2dhg.x87ps6o.xxymvpz.xlh3980.xvmahel.x1lku1pv.x1g40iwx.x1lcm9me.x1yr5g0i.xrt01vj.x10y3i5r.xr1yuqi.xkrivgy.x4ii5y1.x1gryazu.x15h9jz8.x47corl.xplzrv5.xudqn12.xexx8yu.x18d9i69.xkhd6sd.x1n2onr6.x16tdsg8.x1hl2dhg'
+            ],
+            "comment_selectors": [
+                'div[role="article"] div[dir="auto"]',
+                'div[data-testid="comment"]',
+                'div.x1iorvi4.x1pi3gq7.x1swvt13.x1n2onr6',
+                'li[role="article"]'
+            ],
+            "modal_selectors": {
+                "container": [
+                    'div[role="dialog"]',
+                    'div[aria-modal="true"]',
+                    'div.x1n2onr6.x1ja2u2z.x9f619.x78zum5.xdt5ytf.x2lah0s.x193iq5w.xeuugli.x1iyjqo2.xs83m0k.x150jy0e.x1e558r4.xjkvuk6.x1iorvi4'
+                ],
+                "close_buttons": [
+                    'div[aria-label="Close"]',
+                    'div[role="button"][aria-label*="Close"]',
+                    'button[aria-label="Close"]',
+                    'i[data-visualcompletion="css-img"]'
+                ],
+                "comment_container": [
+                    'div[role="dialog"] div[role="article"]',
+                    'div[aria-modal="true"] div[role="article"]',
+                    'div[role="dialog"] li[role="article"]'
+                ]
+            }
+        }
+
+    def validate_facebook_url(self, url: str) -> bool:
+        """Валидация Facebook URL"""
+        pattern = r"https?://(www\.)?(facebook|fb)\.com/.*"
+        return bool(re.match(pattern, url))
+
+    async def load_cookies(self, context) -> None:
+        """Загружает cookies из файла перед запуском"""
+        try:
+            cookies_file = Path(r"C:\ScrappingVer3\facebook_cookies.json")
+            if not cookies_file.exists():
+                self.logger.warning(f"Cookie file not found at {cookies_file}, continuing without cookies")
+                return
+
+            with open(cookies_file, "r", encoding="utf-8") as f:
+                cookie_data = json.load(f)
+
+            # Fix for SameSite attribute
+            for cookie in cookie_data["cookies"]:
+                if "sameSite" in cookie and cookie["sameSite"] not in ["Strict", "Lax", "None"]:
+                    cookie["sameSite"] = "Lax"
+                elif "sameSite" not in cookie:
+                    cookie["sameSite"] = "Lax"
+
+            await context.add_cookies(cookie_data["cookies"])
+            self.logger.info(f"Successfully loaded {len(cookie_data['cookies'])} cookies from {cookies_file}")
+
+        except Exception as e:
+            self.logger.error(f"Error loading cookies: {e}")
+
+    async def wait_for_login(self, page: Page) -> bool:
+        """Ожидание подтверждения логина от пользователя"""
+        print("\n" + "="*50)
+        print("\033[93mПожалуйста, убедитесь что вы залогинены в Facebook.")
+        print("Проверьте страницу браузера.")
+        print("После успешного логина, нажмите Enter для продолжения...\033[0m")
+        print("="*50 + "\n")
+        
+        input("Нажмите Enter для продолжения...")
+        
+        try:
+            # Улучшенные селекторы для проверки логина
+            selectors_to_check = [
+                'div[role="banner"]',
+                '[data-pagelet="root"]',
+                'div[data-pagelet="FeedUnit"]',
+                'a[aria-label="Facebook"]',
+                'div[aria-label="Home"]'
+            ]
+            
+            for selector in selectors_to_check:
+                try:
+                    await page.wait_for_selector(selector, timeout=10000)
+                    self.logger.info(f"Login confirmed - found selector: {selector}")
+                    await self.save_cookies(page.context)
+                    return True
+                except:
+                    continue
+                    
+            self.logger.warning("Could not confirm login with standard selectors, proceeding anyway")
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Login check failed: {e}")
+            return False
+
+    async def init_browser(self) -> tuple[Playwright, Browser, Page]:
+        playwright = await async_playwright().start()
+        browser = await playwright.chromium.launch(
+            headless=False,
+            args=[
+                '--disable-notifications',
+                '--no-sandbox',
+                '--disable-gpu',
+                '--disable-infobars',
+                '--disable-blink-features=AutomationControlled',
+                '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            ]
+        )
+        
+        context = await browser.new_context(
+            viewport={'width': 1920, 'height': 1080},
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
+        
+        await self.load_cookies(context)
+        page = await context.new_page()
+        return playwright, browser, page
+
+    async def scrape(self, url: str, max_posts: int = 50) -> None:
+        if not self.validate_facebook_url(url):
+            self.logger.error("Invalid Facebook URL provided")
+            print("\033[91mОшибка: Некорректный URL Facebook\033[0m")
+            return
+
+        try:
+            playwright, browser, page = await self.init_browser()
+            try:
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+                self.logger.info("Page loaded successfully")
+
+                if not await self.wait_for_login(page):
+                    self.logger.error("Login verification failed!")
+                    print("\033[91mОшибка: Не удалось подтвердить логин. Проверьте доступ к Facebook.\033[0m")
+                    return
+
+                print("\033[92mЛогин подтвержден успешно! Начинаем сбор данных...\033[0m")
+
+                # Получаем актуальные селекторы для этой страницы
+                self.selectors = await self.get_dynamic_selectors(page)
+                posts = await self.collect_posts_with_comments(page, max_posts)
+                self.data_structure["posts"] = posts
+                self.save_results()
+
+            finally:
+                await browser.close()
+                await playwright.stop()
+
+        except Exception as e:
+            self.logger.error(f"Critical error: {e}")
+            print(f"\033[91mКритическая ошибка: {e}\033[0m")
+            raise
+
+    async def get_dynamic_selectors(self, page: Page) -> dict:
+        """Получаем динамические селекторы для текущей страницы"""
+        try:
+            # Пытаемся использовать dom_analyzer если он доступен
+            if hasattr(facebook_dom_analyzer, 'get_selectors'):
+                return await facebook_dom_analyzer.get_selectors(page)
+            else:
+                self.logger.warning("facebook_dom_analyzer.get_selectors not available, using base selectors")
+                return self.base_selectors
+        except Exception as e:
+            self.logger.warning(f"Error getting dynamic selectors: {e}, using base selectors")
+            return self.base_selectors
+
+    async def collect_posts_with_comments(self, page: Page, max_posts: int) -> list:
+        """Основной метод сбора постов с комментариями"""
+        posts = []
+        
+        try:
+            print("\033[94mНачинаем сбор постов с комментариями...\033[0m")
+            
+            # Прокручиваем страницу для загрузки контента
+            for i in range(5):
+                await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+                await page.wait_for_timeout(3000)
+                print(f"\033[94mПрокрутка страницы: {i+1}/5\033[0m")
+
+            # Используем селекторы
+            post_selectors = self.selectors.get("post_selectors", self.base_selectors["post_selectors"])
+            post_elements = []
+            
+            for selector in post_selectors:
+                elements = await page.query_selector_all(selector)
+                if elements:
+                    # Фильтруем, убираем комментарии
+                    filtered_elements = []
+                    for element in elements:
+                        element_text = await element.inner_text()
+                        # Проверяем минимальную длину и структуру поста
+                        if len(element_text) > 100:
+                            author_elements = await element.query_selector_all('h3 a, strong a')
+                            if author_elements:
+                                filtered_elements.append(element)
+                    
+                    if filtered_elements:
+                        print(f"\033[94mНайдено {len(filtered_elements)} постов с селектором: {selector}\033[0m")
+                        post_elements = filtered_elements
+                        break
+            
+            if not post_elements:
+                print("\033[91mНе удалось найти посты.\033[0m")
+                return []
+
+            total_posts = min(len(post_elements), max_posts)
+            print(f"\033[94mОбрабатываем постов: {total_posts}\033[0m")
+
+            for i, post_element in enumerate(post_elements[:max_posts]):
+                print(f"\033[94mОбработка поста: {i+1}/{total_posts}\033[0m")
+                
+                try:
+                    # Извлекаем базовую информацию из поста в ленте
+                    post_data = await self.extract_basic_post_info(post_element)
+                    
+                    if post_data:
+                        # Пытаемся открыть полную версию поста для получения комментариев
+                        full_post_data = await self.open_post_and_extract_comments(page, post_element, post_data)
+                        
+                        if full_post_data:
+                            posts.append(full_post_data)
+                    
+                    # Пауза между постами
+                    await page.wait_for_timeout(2000)
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing post {i+1}: {e}")
+                    continue
+
+        except Exception as e:
+            self.logger.error(f"Error collecting posts: {e}")
+            print(f"\033[91mОшибка при сборе постов: {e}\033[0m")
+
+        return posts
+
+    async def extract_basic_post_info(self, post_element) -> dict:
+        """Извлекаем базовую информацию из поста в ленте"""
+        try:
+            post_url = await self.extract_post_url(post_element)
+            
+            return {
+                "id": await self.generate_post_id(post_element),
+                "timestamp": datetime.now().isoformat(),
+                "author": await self.extract_author_info(post_element),
+                "content": await self.extract_content(post_element),
+                "engagement": await self.extract_engagement_data(post_element),
+                "post_url": post_url,
+                "comments": [],
+                "full_comments_extracted": False
+            }
+        except Exception as e:
+            self.logger.error(f"Error extracting basic post info: {e}")
+            return None
+            
+    async def extract_post_url(self, post_element) -> str:
+        """Извлекаем прямую ссылку на пост"""
+        try:
+            url_selectors = [
+                'a[href*="/posts/"]',
+                'a[href*="story_fbid"]',
+                'a[href*="/photo.php"]',
+                'a[role="link"][aria-label*="ago"]',
+                'a[role="link"][tabindex="0"]',
+                'a[role="link"] abbr',
+                'abbr[data-utime]',
+                'h3 + div a[role="link"]',
+                'div[data-ad-preview="message"] ~ div a[role="link"]'
+            ]
+            
+            for selector in url_selectors:
+                try:
+                    if 'abbr[data-utime]' == selector:
+                        abbr_element = await post_element.query_selector('abbr[data-utime]')
+                        if abbr_element:
+                            link_element = await abbr_element.evaluate('element => element.closest("a")')
+                            if link_element:
+                                href = await link_element.get_attribute('href')
+                                if href and ('posts/' in href or 'story_fbid' in href):
+                                    return self.normalize_facebook_url(href)
+                    else:
+                        link_elements = await post_element.query_selector_all(selector)
+                        for link_element in link_elements:
+                            href = await link_element.get_attribute('href')
+                            if href and ('posts/' in href or 'story_fbid' in href or 'photo.php' in href):
+                                return self.normalize_facebook_url(href)
+                except Exception:
+                    continue
+            
+            return "N/A"
+        except Exception as e:
+            self.logger.error(f"Error extracting post URL: {e}")
+            return "N/A"
+            
+    def normalize_facebook_url(self, url: str) -> str:
+        """Нормализуем Facebook URL"""
+        try:
+            if url.startswith('/'):
+                return f"https://facebook.com{url}"
+            elif not url.startswith('http'):
+                return f"https://facebook.com/{url}"
+            return url
+        except:
+            return url        
+
+    async def open_post_and_extract_comments(self, page: Page, post_element, basic_post_data: dict) -> dict:
+        """Открываем пост и извлекаем все комментарии"""
+        try:
+            print(f"\033[94mПоиск кнопки комментариев для поста {basic_post_data['id']}\033[0m")
+            
+            # Расширенные селекторы для кнопок комментариев
+            comment_button_selectors = [
+                # Стандартные селекторы
+                'div[role="button"][aria-label*="comment"]',
+                'div[role="button"]:has-text("comment")',
+                'span:has-text("comment")',
+                'a[role="link"]:has-text("comment")',
+                
+                # Альтернативные подходы
+                'div.x1i10h5g.xjqpnuy.xa49m3k.xqeqjp1.x2hbi6w.x9f619',
+                'div[data-testid="UFI2CommentsList/root"]',
+                
+                # Поиск по тексту с регистронезависимостью
+                '//*[contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "comment")]',
+                
+                # Универсальные селекторы
+                'div[role="button"]',
+                'span[role="button"]',
+                'a[role="link"]'
+            ]
+            
+            clicked_element = None
+            click_method = None
+            
+            # Метод 1: Поиск специфических кнопок комментариев
+            for selector in comment_button_selectors[:6]:  # Первые 6 - специфические селекторы
+                try:
+                    if selector.startswith('//'):
+                        # XPath селектор
+                        elements = await post_element.query_selector_all(f'xpath={selector}')
+                    else:
+                        elements = await post_element.query_selector_all(selector)
+                    
+                    for element in elements:
+                        try:
+                            text = await element.inner_text()
+                            aria_label = await element.get_attribute('aria-label') or ""
+                            
+                            # Проверяем текст и aria-label на наличие "comment"
+                            if ('comment' in text.lower() or 'comment' in aria_label.lower()) and \
+                               any(word in text.lower() for word in ['comment', 'комментари']):
+                                clicked_element = element
+                                click_method = f"Specific selector: {selector}"
+                                print(f"\033[94mНайден элемент комментариев: '{text}' (aria-label: '{aria_label}')\033[0m")
+                                break
+                        except Exception:
+                            continue
+                    
+                    if clicked_element:
+                        break
+                        
+                except Exception as e:
+                    continue
+            
+            # Метод 2: Если не нашли специфические, ищем среди всех кнопок
+            if not clicked_element:
+                print("\033[93mПоиск среди всех интерактивных элементов...\033[0m")
+                
+                for selector in comment_button_selectors[6:]:  # Универсальные селекторы
+                    try:
+                        elements = await post_element.query_selector_all(selector)
+                        for element in elements:
+                            try:
+                                # Проверяем видимость элемента
+                                if not await element.is_visible():
+                                    continue
+                                
+                                text = await element.inner_text()
+                                aria_label = await element.get_attribute('aria-label') or ""
+                                
+                                # Более гибкий поиск текста с комментариями
+                                if text and len(text) < 100:  # Не слишком длинный текст
+                                    text_lower = text.lower()
+                                    aria_lower = aria_label.lower()
+                                    
+                                    comment_indicators = ['comment', 'комментари', 'коммент']
+                                    
+                                    if any(indicator in text_lower or indicator in aria_lower 
+                                          for indicator in comment_indicators):
+                                        clicked_element = element
+                                        click_method = f"Universal search: {selector}"
+                                        print(f"\033[94mНайден элемент через универсальный поиск: '{text}'\033[0m")
+                                        break
+                                        
+                            except Exception:
+                                continue
+                        
+                        if clicked_element:
+                            break
+                            
+                    except Exception:
+                        continue
+            
+            # Метод 3: Поиск по числам (количество комментариев)
+            if not clicked_element:
+                print("\033[93mПоиск элементов с числами (возможно, количество комментариев)...\033[0m")
+                try:
+                    all_clickable = await post_element.query_selector_all('div[role="button"], a[role="link"], span[role="button"]')
+                    for element in all_clickable:
+                        try:
+                            if not await element.is_visible():
+                                continue
+                                
+                            text = await element.inner_text()
+                            # Ищем элементы с числами (возможно количество комментариев)
+                            if re.search(r'\d+', text) and len(text) < 50:
+                                clicked_element = element
+                                click_method = "Number-based search"
+                                print(f"\033[94mНайден элемент с числом: '{text}'\033[0m")
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+            
+            if not clicked_element:
+                print(f"\033[91mНе найдена кнопка комментариев для поста {basic_post_data['id']}\033[0m")
+                return basic_post_data
+            
+            # Пытаемся кликнуть на найденный элемент
+            current_url = page.url
+            click_success = await self.safe_click_element(clicked_element, click_method)
+            
+            if not click_success:
+                print(f"\033[91mНе удалось кликнуть на элемент комментариев\033[0m")
+                return basic_post_data
+            
+            # Ждем загрузки
+            await page.wait_for_timeout(3000)
+            
+            # Проверяем результат клика
+            modal_opened = await self.check_modal_opened(page)
+            page_changed = page.url != current_url
+            
+            if modal_opened:
+                print(f"\033[92mОткрылось модальное окно комментариев\033[0m")
+                comments = await self.extract_full_comments(page, modal=True)
+                basic_post_data["comments"] = comments
+                basic_post_data["full_comments_extracted"] = True
+                print(f"\033[92mИзвлечено {len(comments)} комментариев\033[0m")
+                
+                # Закрываем модальное окно
+                await self.close_modal(page)
+                
+            elif page_changed:
+                print(f"\033[92mОткрылась новая страница поста: {page.url}\033[0m")
+                comments = await self.extract_full_comments(page, modal=False)
+                basic_post_data["comments"] = comments
+                basic_post_data["full_comments_extracted"] = True
+                basic_post_data["post_url"] = page.url
+                print(f"\033[92mИзвлечено {len(comments)} комментариев\033[0m")
+                
+                # Возвращаемся назад
+                await page.go_back()
+                await page.wait_for_timeout(2000)
+            else:
+                print(f"\033[93mКлик не привел к открытию комментариев\033[0m")
+            
+            return basic_post_data
+            
+        except Exception as e:
+            self.logger.error(f"Error opening post for comments: {e}")
+            return basic_post_data
+
+    async def safe_click_element(self, element, method_description: str) -> bool:
+        """Безопасный клик по элементу с несколькими попытками"""
+        try:
+            print(f"\033[94mПопытка клика: {method_description}\033[0m")
+            
+            # Метод 1: Обычный клик
+            try:
+                await element.click()
+                await asyncio.sleep(1)
+                return True
+            except Exception as e:
+                print(f"\033[93mОбычный клик не сработал: {e}\033[0m")
+            
+            # Метод 2: Принудительный клик
+            try:
+                await element.click(force=True)
+                await asyncio.sleep(1)
+                return True
+            except Exception as e:
+                print(f"\033[93mПринудительный клик не сработал: {e}\033[0m")
+            
+            # Метод 3: JavaScript клик
+            try:
+                await element.evaluate('element => element.click()')
+                await asyncio.sleep(1)
+                return True
+            except Exception as e:
+                print(f"\033[93mJavaScript клик не сработал: {e}\033[0m")
+            
+            # Метод 4: Dispatch event
+            try:
+                await element.dispatch_event('click')
+                await asyncio.sleep(1)
+                return True
+            except Exception as e:
+                print(f"\033[93mDispatch event не сработал: {e}\033[0m")
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error in safe_click_element: {e}")
+            return False
+
+    async def check_modal_opened(self, page: Page) -> bool:
+        """Проверяем, открылось ли модальное окно"""
+        try:
+            modal_selectors = self.base_selectors["modal_selectors"]["container"]
+            
+            for selector in modal_selectors:
+                try:
+                    modal_element = await page.query_selector(selector)
+                    if modal_element and await modal_element.is_visible():
+                        return True
+                except Exception:
+                    continue
+            
+            return False
+        except Exception as e:
+            self.logger.error(f"Error checking modal: {e}")
+            return False
+
+    async def close_modal(self, page: Page) -> None:
+        """Закрываем модальное окно"""
+        try:
+            print("\033[94mЗакрываем модальное окно...\033[0m")
+            
+            # Метод 1: ESC клавиша
+            try:
+                await page.keyboard.press('Escape')
+                await page.wait_for_timeout(2000)
+                
+                if not await self.check_modal_opened(page):
+                    print("\033[92mМодальное окно закрыто с помощью ESC\033[0m")
+                    return
+            except Exception as e:
+                print(f"\033[93mESC не сработал: {e}\033[0m")
+            
+            # Метод 2: Кнопки закрытия
+            close_selectors = self.base_selectors["modal_selectors"]["close_buttons"]
+            for selector in close_selectors:
+                try:
+                    close_button = await page.query_selector(selector)
+                    if close_button and await close_button.is_visible():
+                        await close_button.click()
+                        await page.wait_for_timeout(2000)
+                        
+                        if not await self.check_modal_opened(page):
+                            print(f"\033[92mМодальное окно закрыто кнопкой: {selector}\033[0m")
+                            return
+                except Exception:
+                    continue
+            
+            # Метод 3: Клик вне модального окна
+            try:
+                await page.click('body', position={'x': 50, 'y': 50})
+                await page.wait_for_timeout(1000)
+                
+                if not await self.check_modal_opened(page):
+                    print("\033[92mМодальное окно закрыто кликом вне области\033[0m")
+                    return
+            except Exception as e:
+                print(f"\033[93mКлик вне области не сработал: {e}\033[0m")
+                
+        except Exception as e:
+            self.logger.error(f"Error closing modal: {e}")
+
+    async def extract_full_comments(self, page: Page, modal: bool = False) -> list:
+        """Извлекаем все комментарии со страницы или из модального окна"""
+        comments = []
+        try:
+            print(f"\033[94mИщем комментарии ({'в модальном окне' if modal else 'на странице'})\033[0m")
+            
+            # Даем время на загрузку комментариев
+            await page.wait_for_timeout(3000)
+            
+            # Прокручиваем для загрузки дополнительных комментариев
+            for i in range(3):
+                if modal:
+                    # В модальном окне прокручиваем контейнер с комментариями
+                    modal_containers = self.base_selectors["modal_selectors"]["container"]
+                    for container_selector in modal_containers:
+                        try:
+                            modal_element = await page.query_selector(container_selector)
+                            if modal_element and await modal_element.is_visible():
+                                await modal_element.evaluate('element => element.scrollTo(0, element.scrollHeight)')
+                                break
+                        except Exception:
+                            continue
+                else:
+                    # На странице прокручиваем всю страницу
+                    await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+                
+                await page.wait_for_timeout(2000)
+                print(f"\033[94mПрокрутка для загрузки комментариев: {i+1}/3\033[0m")
+            
+            # Пытаемся найти и нажать кнопку "Показать еще комментарии"
+            await self.load_more_comments(page, modal)
+            
+            # Ищем комментарии с различными селекторами
+            comment_selectors = [
+                # Основные селекторы комментариев
+                'div[role="article"] div[dir="auto"]',
+                'div[data-testid="comment"]', 
+                'div[aria-label*="Comment"]',
+                'li[role="article"]',
+                
+                # Альтернативные селекторы
+                'div.x1iorvi4.x1pi3gq7.x1swvt13.x1n2onr6',
+                'div[data-testid="UFI2CommentsList/root"] div[role="article"]',
+                
+                # Универсальные селекторы для комментариев
+                'div:has(> div > div > span)',  # Структура типичного комментария
+                'div[role="article"]:has(img)',  # Комментарии с аватарами
+            ]
+            
+            comment_elements = []
+            
+            # Если модальное окно, ищем внутри него
+            if modal:
+                modal_comment_selectors = self.base_selectors["modal_selectors"]["comment_container"]
+                for modal_selector in modal_comment_selectors:
+                    try:
+                        modal_comments = await page.query_selector_all(modal_selector)
+                        if modal_comments:
+                            comment_elements.extend(modal_comments)
+                            print(f"\033[94mНайдено {len(modal_comments)} комментариев в модальном окне с селектором: {modal_selector}\033[0m")
+                            break
+                    except Exception:
+                        continue
+            
+            # Если не нашли в модальном окне или это не модальное окно, ищем обычными селекторами
+            if not comment_elements:
+                for selector in comment_selectors:
+                    try:
+                        elements = await page.query_selector_all(selector)
+                        if elements:
+                            # Фильтруем элементы, чтобы исключить дубликаты и нерелевантные элементы
+                            filtered_elements = []
+                            for element in elements:
+                                try:
+                                    text = await element.inner_text()
+                                    # Проверяем минимальные критерии для комментария
+                                    if (text and len(text.strip()) > 5 and 
+                                        not any(word in text.lower() for word in ['advertisement', 'sponsored', 'ad'])):
+                                        
+                                        # Проверяем наличие структуры комментария (автор + текст)
+                                        author_elements = await element.query_selector_all('strong, h3, a[role="link"]')
+                                        if author_elements or len(text) > 20:
+                                            filtered_elements.append(element)
+                                            
+                                except Exception:
+                                    continue
+                            
+                            if filtered_elements:
+                                comment_elements = filtered_elements
+                                print(f"\033[94mНайдено {len(filtered_elements)} комментариев с селектором: {selector}\033[0m")
+                                break
+                                
+                    except Exception as e:
+                        continue
+            
+            if not comment_elements:
+                print("\033[91mКомментарии не найдены\033[0m")
+                return []
+            
+            print(f"\033[94mОбрабатываем {len(comment_elements)} комментариев...\033[0m")
+            
+            # Извлекаем данные из каждого комментария
+            processed_comments = set()  # Для избежания дубликатов
+            
+            for i, comment_element in enumerate(comment_elements[:50]):  # Ограничиваем до 50 комментариев
+                try:
+                    comment_data = await self.extract_single_comment(comment_element, i+1)
+                    
+                    if comment_data:
+                        # Создаем уникальный ключ для проверки дубликатов
+                        comment_key = f"{comment_data.get('author', '')}_{comment_data.get('text', '')[:50]}"
+                        
+                        if comment_key not in processed_comments:
+                            comments.append(comment_data)
+                            processed_comments.add(comment_key)
+                            
+                            if i % 10 == 0:  # Прогресс каждые 10 комментариев
+                                print(f"\033[94mОбработано комментариев: {len(comments)}\033[0m")
+                        
+                except Exception as e:
+                    self.logger.error(f"Error extracting comment {i+1}: {e}")
+                    continue
+            
+            print(f"\033[92mУспешно извлечено {len(comments)} уникальных комментариев\033[0m")
+            return comments
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting comments: {e}")
+            print(f"\033[91mОшибка при извлечении комментариев: {e}\033[0m")
+            return []
+
+    async def load_more_comments(self, page: Page, modal: bool = False) -> None:
+        """Пытаемся загрузить больше комментариев"""
+        try:
+            load_more_selectors = [
+                # Различные варианты кнопок "Показать еще"
+                'div[role="button"]:has-text("View more comments")',
+                'div[role="button"]:has-text("Show more")',
+                'div[role="button"]:has-text("See more")',
+                'span:has-text("View more comments")',
+                'span:has-text("Show more")',
+                
+                # Селекторы на других языках
+                'div[role="button"]:has-text("Показать больше")',
+                'div[role="button"]:has-text("Еще комментарии")',
+                'span:has-text("Показать больше")',
+                
+                # Универсальные селекторы
+                'div[role="button"]',
+                'span[role="button"]'
+            ]
+            
+            attempts = 0
+            max_attempts = 3
+            
+            while attempts < max_attempts:
+                clicked = False
+                
+                for selector in load_more_selectors:
+                    try:
+                        if modal:
+                            # В модальном окне ищем внутри контейнера
+                            modal_containers = self.base_selectors["modal_selectors"]["container"]
+                            for container_selector in modal_containers:
+                                modal_element = await page.query_selector(container_selector)
+                                if modal_element:
+                                    load_button = await modal_element.query_selector(selector)
+                                    if load_button and await load_button.is_visible():
+                                        text = await load_button.inner_text()
+                                        if any(keyword in text.lower() for keyword in ['more', 'больше', 'еще', 'view', 'show', 'see']):
+                                            await load_button.click()
+                                            clicked = True
+                                            print(f"\033[94mНажата кнопка загрузки комментариев: '{text}'\033[0m")
+                                            break
+                                if clicked:
+                                    break
+                        else:
+                            # На обычной странице
+                            elements = await page.query_selector_all(selector)
+                            for element in elements:
+                                if await element.is_visible():
+                                    text = await element.inner_text()
+                                    if any(keyword in text.lower() for keyword in ['more', 'больше', 'еще', 'view', 'show', 'see']):
+                                        await element.click()
+                                        clicked = True
+                                        print(f"\033[94mНажата кнопка загрузки комментариев: '{text}'\033[0m")
+                                        break
+                        
+                        if clicked:
+                            break
+                            
+                    except Exception:
+                        continue
+                
+                if clicked:
+                    await page.wait_for_timeout(3000)  # Ждем загрузки новых комментариев
+                    attempts += 1
+                else:
+                    break  # Если не нашли кнопок, выходим
+                    
+        except Exception as e:
+            self.logger.error(f"Error loading more comments: {e}")
+
+    async def extract_single_comment(self, comment_element, comment_number: int) -> dict:
+        """Извлекаем данные из одного комментария"""
+        try:
+            # Извлекаем автора комментария
+            author = await self.extract_comment_author(comment_element)
+            
+            # Извлекаем текст комментария
+            comment_text = await self.extract_comment_text(comment_element)
+            
+            # Извлекаем время публикации
+            timestamp = await self.extract_comment_timestamp(comment_element)
+            
+            # Извлекаем количество лайков
+            likes = await self.extract_comment_likes(comment_element)
+            
+            # Извлекаем ответы (если есть)
+            replies = await self.extract_comment_replies(comment_element)
+            
+            if not comment_text or len(comment_text.strip()) < 3:
+                return None
+            
+            return {
+                "id": f"comment_{comment_number}_{hash(comment_text[:50])}",
+                "author": author,
+                "text": comment_text.strip(),
+                "timestamp": timestamp,
+                "likes": likes,
+                "replies": replies,
+                "extracted_at": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting single comment: {e}")
+            return None
+
+    async def extract_comment_author(self, comment_element) -> str:
+        """Извлекаем автора комментария"""
+        try:
+            author_selectors = [
+                'strong a',
+                'h3 a', 
+                'a[role="link"] strong',
+                'div[dir="auto"] strong',
+                'span strong',
+                'strong',
+                'h3',
+                'a[role="link"]'
+            ]
+            
+            for selector in author_selectors:
+                try:
+                    author_element = await comment_element.query_selector(selector)
+                    if author_element:
+                        author_text = await author_element.inner_text()
+                        if author_text and len(author_text.strip()) > 0:
+                            return author_text.strip()
+                except Exception:
+                    continue
+                    
+            return "Unknown Author"
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting comment author: {e}")
+            return "Unknown Author"
+
+    async def extract_comment_text(self, comment_element) -> str:
+        """Извлекаем текст комментария"""
+        try:
+            # Получаем весь текст элемента
+            full_text = await comment_element.inner_text()
+            
+            if not full_text:
+                return ""
+            
+            # Удаляем имя автора из начала текста
+            lines = full_text.split('\n')
+            
+            # Пытаемся найти собственно текст комментария
+            comment_text_lines = []
+            skip_first = True  # Первая строка обычно - имя автора
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # Пропускаем строки с метаданными
+                if any(keyword in line.lower() for keyword in ['like', 'reply', 'ago', 'hours', 'minutes', 'days', 'лайк', 'ответ', 'час', 'мин', 'дн']):
+                    continue
+                
+                # Пропускаем первую строку (обычно имя автора)
+                if skip_first and len(line) < 50:
+                    skip_first = False
+                    continue
+                
+                comment_text_lines.append(line)
+            
+            comment_text = ' '.join(comment_text_lines)
+            
+            # Очищаем от лишних символов
+            comment_text = re.sub(r'\s+', ' ', comment_text)
+            
+            return comment_text.strip()
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting comment text: {e}")
+            return ""
+
+    async def extract_comment_timestamp(self, comment_element) -> str:
+        """Извлекаем временную метку комментария"""
+        try:
+            timestamp_selectors = [
+                'abbr[data-utime]',
+                'a[role="link"] abbr',
+                'span[role="link"]',
+                'a[role="link"]'
+            ]
+            
+            for selector in timestamp_selectors:
+                try:
+                    timestamp_element = await comment_element.query_selector(selector)
+                    if timestamp_element:
+                        # Сначала пытаемся получить data-utime
+                        utime = await timestamp_element.get_attribute('data-utime')
+                        if utime:
+                            return datetime.fromtimestamp(int(utime)).isoformat()
+                        
+                        # Если нет data-utime, берем текст
+                        timestamp_text = await timestamp_element.inner_text()
+                        if timestamp_text and any(word in timestamp_text.lower() for word in 
+                                                ['ago', 'час', 'мин', 'дн', 'hour', 'min', 'day']):
+                            return timestamp_text.strip()
+                            
+                except Exception:
+                    continue
+                    
+            return "Unknown time"
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting comment timestamp: {e}")
+            return "Unknown time"
+
+    async def extract_comment_likes(self, comment_element) -> int:
+        """Извлекаем количество лайков комментария"""
+        try:
+            # Ищем элементы с количеством лайков
+            like_selectors = [
+                'span[role="button"]:has-text("Like")',
+                'div[role="button"]:has-text("Like")',
+                'span:has-text("like")',
+                'div[aria-label*="like"]'
+            ]
+            
+            for selector in like_selectors:
+                try:
+                    like_elements = await comment_element.query_selector_all(selector)
+                    for like_element in like_elements:
+                        text = await like_element.inner_text()
+                        # Ищем числа в тексте
+                        numbers = re.findall(r'\d+', text)
+                        if numbers:
+                            return int(numbers[0])
+                except Exception:
+                    continue
+                    
+            return 0
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting comment likes: {e}")
+            return 0
+
+    async def extract_comment_replies(self, comment_element) -> list:
+        """Извлекаем ответы на комментарий"""
+        try:
+            replies = []
+            
+            # Ищем кнопку "Ответы" или "Replies"
+            reply_selectors = [
+                'div[role="button"]:has-text("replies")',
+                'span:has-text("replies")',
+                'div[role="button"]:has-text("ответ")',
+                'span:has-text("ответ")'
+            ]
+            
+            for selector in reply_selectors:
+                try:
+                    reply_elements = await comment_element.query_selector_all(selector)
+                    for reply_element in reply_elements:
+                        text = await reply_element.inner_text()
+                        # Если есть упоминание ответов, но не извлекаем их пока (можно расширить)
+                        if any(word in text.lower() for word in ['replies', 'ответ']):
+                            # Здесь можно добавить логику извлечения ответов
+                            # Пока просто отмечаем, что есть ответы
+                            numbers = re.findall(r'\d+', text)
+                            if numbers:
+                                replies.append({
+                                    "count": int(numbers[0]),
+                                    "extracted": False,
+                                    "note": "Replies detected but not extracted"
+                                })
+                                break
+                except Exception:
+                    continue
+                    
+            return replies
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting comment replies: {e}")
+            return []
+
+    # Остальные методы остаются без изменений...
+    async def generate_post_id(self, post_element) -> str:
+        """Генерирует уникальный ID для поста"""
+        try:
+            # Пытаемся найти уникальные атрибуты
+            unique_attrs = ['data-testid', 'data-pagelet', 'id']
+            for attr in unique_attrs:
+                value = await post_element.get_attribute(attr)
+                if value:
+                    return f"post_{hash(value)}"
+            
+            # Если нет уникальных атрибутов, используем контент
+            content = await post_element.inner_text()
+            return f"post_{hash(content[:100])}"
+            
+        except Exception:
+            return f"post_{hash(str(datetime.now()))}"
+
+    async def extract_author_info(self, post_element) -> dict:
+        """Извлекает информацию об авторе поста"""
+        try:
+            author_selectors = [
+                'h3 a strong',
+                'h3 a',
+                'strong a',
+                'div[data-ad-preview="message"] strong',
+                'span strong'
+            ]
+            
+            for selector in author_selectors:
+                try:
+                    author_element = await post_element.query_selector(selector)
+                    if author_element:
+                        name = await author_element.inner_text()
+                        url = await author_element.get_attribute('href')
+                        
+                        return {
+                            "name": name.strip() if name else "Unknown",
+                            "url": self.normalize_facebook_url(url) if url else "N/A"
+                        }
+                except Exception:
+                    continue
+                    
+            return {"name": "Unknown", "url": "N/A"}
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting author info: {e}")
+            return {"name": "Unknown", "url": "N/A"}
+
+    async def extract_content(self, post_element) -> dict:
+        """Извлекает содержимое поста"""
+        try:
+            # Получаем весь текст поста
+            full_text = await post_element.inner_text()
+            
+            # Пытаемся найти основной текст поста
+            content_selectors = [
+                'div[data-ad-preview="message"]',
+                'div[dir="auto"]:not(:has(strong))',  # Текст без имени автора
+                'span[dir="auto"]'
+            ]
+            
+            post_text = ""
+            for selector in content_selectors:
+                try:
+                    content_element = await post_element.query_selector(selector)
+                    if content_element:
+                        text = await content_element.inner_text()
+                        if text and len(text) > len(post_text):
+                            post_text = text
+                except Exception:
+                    continue
+            
+            # Если не нашли специфический контент, используем часть общего текста
+            if not post_text and full_text:
+                lines = full_text.split('\n')
+                # Пропускаем первые строки (обычно имя автора и метаданные)
+                content_lines = []
+                for line in lines[2:]:  # Начинаем с 3-й строки
+                    line = line.strip()
+                    if line and not any(keyword in line.lower() for keyword in 
+                                      ['like', 'comment', 'share', 'ago', 'hours', 'minutes']):
+                        content_lines.append(line)
+                        if len(' '.join(content_lines)) > 200:  # Ограничиваем длину
+                            break
+                
+                post_text = ' '.join(content_lines)
+            
+            # Извлекаем информацию о медиа
+            media_info = await self.extract_media_info(post_element)
+            
+            return {
+                "text": post_text.strip()[:1000],  # Ограничиваем до 1000 символов
+                "media": media_info,
+                "full_text_length": len(full_text)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting content: {e}")
+            return {"text": "Content extraction failed", "media": [], "full_text_length": 0}
+
+    async def extract_media_info(self, post_element) -> list:
+        """Извлекает информацию о медиафайлах в посте"""
+        try:
+            media = []
+            
+            # Ищем изображения
+            img_elements = await post_element.query_selector_all('img')
+            for img in img_elements:
+                try:
+                    src = await img.get_attribute('src')
+                    alt = await img.get_attribute('alt') or ""
+                    
+                    if src and 'scontent' in src:  # Facebook изображения содержат 'scontent'
+                        media.append({
+                            "type": "image",
+                            "src": src,
+                            "alt": alt
+                        })
+                except Exception:
+                    continue
+            
+            # Ищем видео
+            video_elements = await post_element.query_selector_all('video')
+            for video in video_elements:
+                try:
+                    src = await video.get_attribute('src')
+                    if src:
+                        media.append({
+                            "type": "video",
+                            "src": src
+                        })
+                except Exception:
+                    continue
+            
+            return media[:5]  # Ограничиваем до 5 медиафайлов
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting media info: {e}")
+            return []
+
+    async def extract_engagement_data(self, post_element) -> dict:
+        """Извлекает данные о взаимодействии с постом"""
+        try:
+            engagement = {
+                "likes": 0,
+                "comments": 0,
+                "shares": 0,
+                "reactions": {}
+            }
+            
+            # Ищем счетчики лайков, комментариев, репостов
+            text_content = await post_element.inner_text()
+            
+            # Простое извлечение чисел из текста
+            numbers = re.findall(r'\d+', text_content)
+            
+            # Ищем специфические элементы с количеством взаимодействий
+            interaction_selectors = [
+                'span[role="button"]',
+                'div[role="button"]',
+                'a[role="link"]'
+            ]
+            
+            for selector in interaction_selectors:
+                try:
+                    elements = await post_element.query_selector_all(selector)
+                    for element in elements:
+                        text = await element.inner_text()
+                        text_lower = text.lower()
+                        
+                        # Ищем лайки
+                        if any(word in text_lower for word in ['like', 'лайк']) and re.search(r'\d+', text):
+                            numbers_in_text = re.findall(r'\d+', text)
+                            if numbers_in_text:
+                                engagement["likes"] = max(engagement["likes"], int(numbers_in_text[0]))
+                        
+                        # Ищем комментарии
+                        elif any(word in text_lower for word in ['comment', 'комментари']) and re.search(r'\d+', text):
+                            numbers_in_text = re.findall(r'\d+', text)
+                            if numbers_in_text:
+                                engagement["comments"] = max(engagement["comments"], int(numbers_in_text[0]))
+                        
+                        # Ищем репосты
+                        elif any(word in text_lower for word in ['share', 'репост']) and re.search(r'\d+', text):
+                            numbers_in_text = re.findall(r'\d+', text)
+                            if numbers_in_text:
+                                engagement["shares"] = max(engagement["shares"], int(numbers_in_text[0]))
+                
+                except Exception:
+                    continue
+            
+            return engagement
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting engagement data: {e}")
+            return {"likes": 0, "comments": 0, "shares": 0, "reactions": {}}
+
+    async def save_cookies(self, context) -> None:
+        """Сохраняет cookies для повторного использования"""
+        try:
+            cookies = await context.cookies()
+            cookie_data = {
+                "cookies": cookies,
+                "saved_at": datetime.now().isoformat()
+            }
+            
+            cookies_file = Path(r"C:\ScrappingVer3\facebook_cookies.json")
+            cookies_file.parent.mkdir(exist_ok=True)
+            
+            with open(cookies_file, "w", encoding="utf-8") as f:
+                json.dump(cookie_data, f, indent=2, ensure_ascii=False)
+            
+            self.logger.info(f"Cookies saved to {cookies_file}")
+            
+        except Exception as e:
+            self.logger.error(f"Error saving cookies: {e}")
+
+    def save_results(self) -> None:
+        """Сохраняет результаты в JSON файл"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = self.base_output_dir / f"facebook_posts_{timestamp}.json"
+            
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(self.data_structure, f, indent=2, ensure_ascii=False)
+            
+            print(f"\033[92mРезультаты сохранены в: {filename}\033[0m")
+            print(f"\033[92mВсего постов: {len(self.data_structure['posts'])}\033[0m")
+            
+            # Статистика по комментариям
+            total_comments = sum(len(post.get('comments', [])) for post in self.data_structure['posts'])
+            print(f"\033[92mВсего комментариев: {total_comments}\033[0m")
+            
+            self.logger.info(f"Results saved to {filename}")
+            
+        except Exception as e:
+            self.logger.error(f"Error saving results: {e}")
+            print(f"\033[91mОшибка сохранения результатов: {e}\033[0m")
+
+
+# Пример использования
+async def main():
+    scraper = FacebookScraper()
+    
+    # Замените на нужный URL Facebook
+    facebook_url = input("Введите URL Facebook страницы/группы/профиля: ").strip()
+    
+    if not facebook_url:
+        facebook_url = "https://www.facebook.com/groups/1075275215820713"  # Главная лента по умолчанию
+    
+    max_posts = input("Введите максимальное количество постов (по умолчанию 20): ").strip()
+    max_posts = int(max_posts) if max_posts.isdigit() else 20
+    
+    try:
+        await scraper.scrape(facebook_url, max_posts)
+        print("\033[92mСкрейпинг завершен успешно!\033[0m")
+    except Exception as e:
+        print(f"\033[91mОшибка выполнения: {e}\033[0m")
+
+if __name__ == "__main__":
+    asyncio.run(main())

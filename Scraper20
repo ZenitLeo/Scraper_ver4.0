@@ -935,6 +935,101 @@ class FacebookScraper:
             self.logger.error(f"❌ Ошибка при авторизации: {e}")
             return False
 
+    async def scrape_group_posts(self, url: str, posts_count: int, delays: Dict[str, int], comments_settings: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.scraper_logger.info(f"Начинаем парсинг постов из группы/страницы: {url}")
+        await self.page.goto(url, wait_until='domcontentloaded')
+        await self.page.wait_for_selector('body')
+
+        posts_data = []
+        scraped_posts_count = 0
+
+        while scraped_posts_count < posts_count or posts_count == -1:
+            try:
+                await self.page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+                await asyncio.sleep(delays['scroll_delay'])
+
+                posts = await self.page.query_selector_all('div[role="article"]')
+                self.scraper_logger.info(f"Найдено {len(posts)} постов")
+
+                for post_element in posts:
+                    if scraped_posts_count >= posts_count and posts_count != -1:
+                        break
+
+                    try:
+                        author_element = await post_element.query_selector('h3 a')
+                        author = await author_element.text_content() if author_element else 'N/A'
+
+                        timestamp_element = await post_element.query_selector('abbr') or await post_element.query_selector('a[href*="fbid"] time')
+                        timestamp = await timestamp_element.get_attribute('title') if timestamp_element else 'N/A'
+
+                        text_content_element = await post_element.query_selector('div[data-ad-preview="message"]')
+                        text_content = await text_content_element.text_content() if text_content_element else 'N/A'
+
+                        likes_element = await post_element.query_selector('span[aria-label*="Нравится"]')
+                        likes = int(''.join(filter(str.isdigit, await likes_element.text_content()))) if likes_element else 0
+
+                        comments_list = []
+                        if comments_settings['parse_comments']:
+                            try:
+                                comments_button = await post_element.query_selector('div[role="button"]:has-text("комментари")')
+                                if comments_button:
+                                    await comments_button.click()
+                                    await self.page.wait_for_timeout(delays['comment_delay'] * 1000)
+
+                                comment_elements = await post_element.query_selector_all('div[aria-label="Комментарий"]')
+                                for comment_element in comment_elements:
+                                    if comments_settings['max_comments'] != -1 and len(comments_list) >= comments_settings['max_comments']:
+                                        break
+
+                                    comment_author_element = await comment_element.query_selector('h3 a')
+                                    comment_author = await comment_author_element.text_content() if comment_author_element else 'N/A'
+
+                                    comment_text_element = await comment_element.query_selector('div[data-testid="comment-content"]')
+                                    comment_text = await comment_text_element.text_content() if comment_text_element else 'N/A'
+
+                                    comment_timestamp_element = await comment_element.query_selector('abbr')
+                                    comment_timestamp = await comment_timestamp_element.get_attribute('title') if comment_timestamp_element else 'N/A'
+
+                                    comments_list.append({
+                                        'author': comment_author,
+                                        'text': comment_text,
+                                        'timestamp': comment_timestamp
+                                    })
+                                    
+                            except Exception as e:
+                                self.error_logger.error(f"Ошибка при парсинге комментариев: {e}")
+
+                        post_data = {
+                            'author': author,
+                            'text': text_content,
+                            'timestamp': timestamp,
+                            'likes': likes,
+                            'comments': comments_list
+                        }
+                        posts_data.append(post_data)
+                        scraped_posts_count += 1
+                        self.scraper_logger.info(f"Спарсен пост от {author}. Всего: {scraped_posts_count}")
+                        await asyncio.sleep(delays['post_delay'])
+
+                    except Exception as e:
+                        self.error_logger.error(f"Ошибка при парсинге поста: {e}")
+
+                if posts_count != -1 and scraped_posts_count >= posts_count:
+                    break
+
+            except Exception as e:
+                self.error_logger.error(f"Ошибка в цикле парсинга: {e}")
+                break
+        
+        self.scraper_logger.info(f"Завершили. Всего спарсено {len(posts_data)} постов.")
+        return posts_data
+        
+        html_debug = await post_element.inner_html()
+        with open(f"debug_post_{scraped_posts_count}.html", "w", encoding="utf-8") as f:
+            f.write(html_debug)
+
+        print(f"\u001b[93m[Debug] Сохранил HTML поста {scraped_posts_count} в debug_post_{scraped_posts_count}.html\u001b[0m")
+    
     async def extract_full_comments(self, page: Page, modal: bool = False) -> List[Comment]:
         """Извлекаем все комментарии со страницы или из модального окна"""
         comments = []
@@ -1224,6 +1319,8 @@ class FacebookScraper:
         view_more_selectors = [
             'div[role="button"]:has-text("View more comments")',
             'div[role="button"]:has-text("Показать еще")',
+            'div[role="button"]:has-text("See more")',
+            'div[role="button"]:has-text("Reply")',
             'span:has-text("View more comments")',
             'span:has-text("Показать еще комментарии")',
             '[data-testid="UFI2CommentsCount/root"] div[role="button"]'
@@ -1242,8 +1339,8 @@ class FacebookScraper:
                             clicked_any = True
                             found_button = True
                             
-                            self.scraper_logger.info(f"Нажата кнопка 'Показать еще' (попытка {attempts + 1})")
-                            print(f"\033[94m✓ Нажата кнопка 'Показать еще' (попытка {attempts + 1})\033[0m")
+                            self.scraper_logger.info(f"Нажата кнопка 'See more' (попытка {attempts + 1})")
+                            print(f"\033[94m✓ Нажата кнопка 'See more' (попытка {attempts + 1})\033[0m")
                             break
                     if found_button:
                         break
@@ -1389,7 +1486,14 @@ async def main():
             print(f"\n📚 Парсим {config['posts_count']} постов из: {config['url']}")
             # Здесь нужно будет добавить методы для парсинга множественных постов
             # results = await scraper.scrape_multiple_posts(config)
-            results = {"message": "Функция парсинга множественных постов будет добавлена"}
+            results = await scraper.scrape_group_posts(
+            url=config['url'],
+            posts_count=config['posts_count'],
+            delays=config['delays'],
+            comments_settings=config['comments']
+        )
+
+
         
         # Сохранение результатов
         print(f"\n💾 Сохраняем результаты в {config['output']['filename']}...")
@@ -1411,3 +1515,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+
+

@@ -1,0 +1,184 @@
+python fbscrap.py
+2025-06-21 22:54:54,418 - facebook_scraper - INFO - __init__:1428 - Enhanced Facebook Scraper initialized
+2025-06-21 22:54:54,424 - facebook_scraper - INFO - start_monitoring:1216 - Performance monitoring started
+2025-06-21 22:54:54,424 - facebook_scraper - INFO - start_async_processing:712 - Started 2 processing workers
+2025-06-21 22:54:54,424 - facebook_scraper - INFO - _initialize_driver:1468 - Initializing undetected_chromedriver...
+2025-06-21 22:54:54,425 - facebook_scraper - INFO - _initialize_driver:1489 - GPU usage disabled or not available.
+2025-06-21 22:54:57,146 - facebook_scraper - ERROR - log_error_with_context:161 - ERROR: Message: invalid argument: cannot parse capability: goog:chromeOptions
+from invalid argument: unrecognized chrome option: excludeSwitches
+Stacktrace:
+        GetHandleVerifier [0x0x323b03+62899]
+        GetHandleVerifier [0x0x323b44+62964]
+        (No symbol) [0x0x1510f3]
+        (No symbol) [0x0x17876c]
+        (No symbol) [0x0x17a050]
+        (No symbol) [0x0x1751dd]
+        (No symbol) [0x0x1c8c12]
+        (No symbol) [0x0x1c8714]
+        (No symbol) [0x0x1c9e5f]
+        (No symbol) [0x0x1c9c0a]
+        (No symbol) [0x0x1be306]
+        (No symbol) [0x0x18d670]
+        (No symbol) [0x0x18e4e4]
+        GetHandleVerifier [0x0x584793+2556483]
+        GetHandleVerifier [0x0x57fd02+2537394]
+        GetHandleVerifier [0x0x34a2fa+220586]
+        GetHandleVerifier [0x0x33aae8+157080]
+        GetHandleVerifier [0x0x34141d+184013]
+        GetHandleVerifier [0x0x32ba68+95512]
+        GetHandleVerifier [0x0x32bc10+95936]
+        GetHandleVerifier [0x0x316b5a+9738]
+        BaseThreadInitThunk [0x0x755b5d49+25]
+        RtlInitializeExceptionChain [0x0x77a7d09b+107]
+        RtlGetAppContainerNamedObjectPath [0x0x77a7d021+561]
+        (No symbol) [0x0]
+
+Context: {
+  "method": "_initialize_driver"
+}
+Traceback: Traceback (most recent call last):
+  File "C:\ScraperVer4\fbscrap.py", line 1492, in _initialize_driver
+    self.driver = uc.Chrome(options=options)
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\undetected_chromedriver\__init__.py", line 466, in __init__
+    super(Chrome, self).__init__(
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\chrome\webdriver.py", line 45, in __init__
+    super().__init__(
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\chromium\webdriver.py", line 56, in __init__
+    super().__init__(
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\remote\webdriver.py", line 208, in __init__
+    self.start_session(capabilities)
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\undetected_chromedriver\__init__.py", line 724, in start_session
+    super(selenium.webdriver.chrome.webdriver.WebDriver, self).start_session(
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\remote\webdriver.py", line 292, in start_session
+    response = self.execute(Command.NEW_SESSION, caps)["value"]
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\remote\webdriver.py", line 347, in execute
+    self.error_handler.check_response(response)
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\remote\errorhandler.py", line 229, in check_response
+    raise exception_class(message, screen, stacktrace)
+selenium.common.exceptions.InvalidArgumentException: Message: invalid argument: cannot parse capability: goog:chromeOptions
+from invalid argument: unrecognized chrome option: excludeSwitches
+Stacktrace:
+        GetHandleVerifier [0x0x323b03+62899]
+        GetHandleVerifier [0x0x323b44+62964]
+        (No symbol) [0x0x1510f3]
+        (No symbol) [0x0x17876c]
+        (No symbol) [0x0x17a050]
+        (No symbol) [0x0x1751dd]
+        (No symbol) [0x0x1c8c12]
+        (No symbol) [0x0x1c8714]
+        (No symbol) [0x0x1c9e5f]
+        (No symbol) [0x0x1c9c0a]
+        (No symbol) [0x0x1be306]
+        (No symbol) [0x0x18d670]
+        (No symbol) [0x0x18e4e4]
+        GetHandleVerifier [0x0x584793+2556483]
+        GetHandleVerifier [0x0x57fd02+2537394]
+        GetHandleVerifier [0x0x34a2fa+220586]
+        GetHandleVerifier [0x0x33aae8+157080]
+        GetHandleVerifier [0x0x34141d+184013]
+        GetHandleVerifier [0x0x32ba68+95512]
+        GetHandleVerifier [0x0x32bc10+95936]
+        GetHandleVerifier [0x0x316b5a+9738]
+        BaseThreadInitThunk [0x0x755b5d49+25]
+        RtlInitializeExceptionChain [0x0x77a7d09b+107]
+        RtlGetAppContainerNamedObjectPath [0x0x77a7d021+561]
+        (No symbol) [0x0]
+
+
+2025-06-21 22:54:57,148 - facebook_scraper - ERROR - log_error_with_context:161 - ERROR: Message: invalid argument: cannot parse capability: goog:chromeOptions
+from invalid argument: unrecognized chrome option: excludeSwitches
+Stacktrace:
+        GetHandleVerifier [0x0x323b03+62899]
+        GetHandleVerifier [0x0x323b44+62964]
+        (No symbol) [0x0x1510f3]
+        (No symbol) [0x0x17876c]
+        (No symbol) [0x0x17a050]
+        (No symbol) [0x0x1751dd]
+        (No symbol) [0x0x1c8c12]
+        (No symbol) [0x0x1c8714]
+        (No symbol) [0x0x1c9e5f]
+        (No symbol) [0x0x1c9c0a]
+        (No symbol) [0x0x1be306]
+        (No symbol) [0x0x18d670]
+        (No symbol) [0x0x18e4e4]
+        GetHandleVerifier [0x0x584793+2556483]
+        GetHandleVerifier [0x0x57fd02+2537394]
+        GetHandleVerifier [0x0x34a2fa+220586]
+        GetHandleVerifier [0x0x33aae8+157080]
+        GetHandleVerifier [0x0x34141d+184013]
+        GetHandleVerifier [0x0x32ba68+95512]
+        GetHandleVerifier [0x0x32bc10+95936]
+        GetHandleVerifier [0x0x316b5a+9738]
+        BaseThreadInitThunk [0x0x755b5d49+25]
+        RtlInitializeExceptionChain [0x0x77a7d09b+107]
+        RtlGetAppContainerNamedObjectPath [0x0x77a7d021+561]
+        (No symbol) [0x0]
+
+Context: {
+  "method": "scrape"
+}
+Traceback: Traceback (most recent call last):
+  File "C:\ScraperVer4\fbscrap.py", line 1675, in scrape
+    self._initialize_driver()
+  File "C:\ScraperVer4\fbscrap.py", line 1492, in _initialize_driver
+    self.driver = uc.Chrome(options=options)
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\undetected_chromedriver\__init__.py", line 466, in __init__
+    super(Chrome, self).__init__(
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\chrome\webdriver.py", line 45, in __init__
+    super().__init__(
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\chromium\webdriver.py", line 56, in __init__
+    super().__init__(
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\remote\webdriver.py", line 208, in __init__
+    self.start_session(capabilities)
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\undetected_chromedriver\__init__.py", line 724, in start_session
+    super(selenium.webdriver.chrome.webdriver.WebDriver, self).start_session(
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\remote\webdriver.py", line 292, in start_session
+    response = self.execute(Command.NEW_SESSION, caps)["value"]
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\remote\webdriver.py", line 347, in execute
+    self.error_handler.check_response(response)
+  File "C:\Users\Savva\AppData\Local\Programs\Python\Python310\lib\site-packages\selenium\webdriver\remote\errorhandler.py", line 229, in check_response
+    raise exception_class(message, screen, stacktrace)
+selenium.common.exceptions.InvalidArgumentException: Message: invalid argument: cannot parse capability: goog:chromeOptions
+from invalid argument: unrecognized chrome option: excludeSwitches
+Stacktrace:
+        GetHandleVerifier [0x0x323b03+62899]
+        GetHandleVerifier [0x0x323b44+62964]
+        (No symbol) [0x0x1510f3]
+        (No symbol) [0x0x17876c]
+        (No symbol) [0x0x17a050]
+        (No symbol) [0x0x1751dd]
+        (No symbol) [0x0x1c8c12]
+        (No symbol) [0x0x1c8714]
+        (No symbol) [0x0x1c9e5f]
+        (No symbol) [0x0x1c9c0a]
+        (No symbol) [0x0x1be306]
+        (No symbol) [0x0x18d670]
+        (No symbol) [0x0x18e4e4]
+        GetHandleVerifier [0x0x584793+2556483]
+        GetHandleVerifier [0x0x57fd02+2537394]
+        GetHandleVerifier [0x0x34a2fa+220586]
+        GetHandleVerifier [0x0x33aae8+157080]
+        GetHandleVerifier [0x0x34141d+184013]
+        GetHandleVerifier [0x0x32ba68+95512]
+        GetHandleVerifier [0x0x32bc10+95936]
+        GetHandleVerifier [0x0x316b5a+9738]
+        BaseThreadInitThunk [0x0x755b5d49+25]
+        RtlInitializeExceptionChain [0x0x77a7d09b+107]
+        RtlGetAppContainerNamedObjectPath [0x0x77a7d021+561]
+        (No symbol) [0x0]
+
+
+2025-06-21 22:55:02,162 - facebook_scraper - INFO - stop_monitoring:1322 - Performance monitoring stopped
+2025-06-21 22:55:02,490 - facebook_scraper - INFO - stop_async_processing:759 - Stopped all processing workers
+2025-06-21 22:55:02,490 - facebook_scraper - INFO - _cleanup:1460 - Resources cleaned up successfully.
+2025-06-21 22:55:02,491 - facebook_scraper - INFO - scrape:1767 - Scraping process finished. Performance report:
+An error occurred during scraping: 'ScrapingConfig' object has no attribute 'max_memory_usage'
+2025-06-21 22:55:02,497 - facebook_scraper - CRITICAL - <module>:1825 - Unhandled error in main execution: 'ScrapingConfig' object has no attribute 'max_memory_usage'
+Traceback (most recent call last):
+  File "C:\ScraperVer4\fbscrap.py", line 1813, in <module>
+    scraped_data = scraper.scrape()
+  File "C:\ScraperVer4\fbscrap.py", line 1768, in scrape
+    self.logger.logger.info(json.dumps(self.performance_monitor.get_performance_report(), indent=2))
+  File "C:\ScraperVer4\fbscrap.py", line 1314, in get_performance_report
+    'memory_threshold': f"{self.config.max_memory_usage:.1f}%"
+AttributeError: 'ScrapingConfig' object has no attribute 'max_memory_usage'

@@ -17,26 +17,13 @@ def setup_driver():
     options.add_experimental_option('useAutomationExtension', False)
     return webdriver.Chrome(options=options)
 
-def convert_mobile_url_to_desktop(mobile_url, group_name):
-    """
-    Преобразует мобильный URL в десктопный формат
-    Из: m.facebook.com/BHPHSuccess/posts/selling-accounts-we-have-been-selling-our-notes-for-last-couple-years-does-anyon/24872671812321053/
-    В: www.facebook.com/groups/BHPHSuccess/permalink/24872671812321053
-    """
-    try:
-        # Извлекаем ID поста (последние цифры в URL)
-        post_id_match = re.search(r'/(\d+)/?$', mobile_url)
-        if post_id_match:
-            post_id = post_id_match.group(1)
-            desktop_url = f"https://www.facebook.com/groups/{group_name}/permalink/{post_id}"
-            print(f"Преобразовано: {mobile_url} -> {desktop_url}")
-            return desktop_url
-        else:
-            print(f"Не удалось извлечь ID поста из URL: {mobile_url}")
-            return mobile_url
-    except Exception as e:
-        print(f"Ошибка преобразования URL {mobile_url}: {e}")
-        return mobile_url
+def extract_post_id(mobile_url):
+    match = re.search(r'/(\d+)/?$', mobile_url)
+    return match.group(1) if match else None
+
+    # Пример использования:
+    sale_post_id = extract_post_id("https://m.facebook.com/BHPHSuccess/posts/not-our-data-but-i-have-a-friend-who-rejected-43-applications-last-month-in-may-/24775876965333872/")
+    print(f"sale_post_id={sale_post_id}")  # sale_post_id=24775876965333872
 
 def load_cookies(driver):
     driver.get('https://m.facebook.com')

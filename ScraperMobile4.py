@@ -17,13 +17,25 @@ def setup_driver():
     options.add_experimental_option('useAutomationExtension', False)
     return webdriver.Chrome(options=options)
 
-def extract_post_id(mobile_url):
-    match = re.search(r'/(\d+)/?$', mobile_url)
-    return match.group(1) if match else None
-
-    # Пример использования:
-    sale_post_id = extract_post_id("https://m.facebook.com/BHPHSuccess/posts/not-our-data-but-i-have-a-friend-who-rejected-43-applications-last-month-in-may-/24775876965333872/")
-    print(f"sale_post_id={sale_post_id}")  # sale_post_id=24775876965333872
+def make_group_permalink_url(mobile_url, group_name=None):
+    """
+    Из любой кривой мобильной ссылки типа .../posts/.../{post_id}/
+    строит корректную ссылку на пост в группе:
+    https://m.facebook.com/groups/{group_name}/permalink/{post_id}/
+    """
+    # Извлечь post_id
+    m = re.search(r'/(\d+)/?$', mobile_url)
+    if not m:
+        return mobile_url
+    post_id = m.group(1)
+    # Если group_name не передан — попытаться вытащить из url
+    if not group_name:
+        m2 = re.search(r'facebook\.com/([^/]+)/posts/', mobile_url)
+        if m2:
+            group_name = m2.group(1)
+        else:
+            return mobile_url  # не удалось
+    return f"https://m.facebook.com/groups/{group_name}/permalink/{post_id}/"
 
 def load_cookies(driver):
     driver.get('https://m.facebook.com')
@@ -39,16 +51,24 @@ def load_cookies(driver):
     except Exception as e:
         print(f"Ошибка загрузки cookies: {e}")
 
-def get_post_links(driver):
+def get_post_links(driver, group_url=None):
+    import re
     time.sleep(3)  # Ждем загрузки страницы
-    
+
+    # Получаем имя группы из group_url
+    group_name = None
+    if group_url:
+        m = re.search(r'/groups/([^/?]+)/?', group_url)
+        if m:
+            group_name = m.group(1)
+
     # Сохраняем исходный URL для возврата
     original_url = driver.current_url
     print(f"Исходный URL: {original_url}")
-    
+
     # Ищем кнопки комментариев для открытия постов
     comment_buttons = driver.find_elements(By.CSS_SELECTOR, 'div[aria-label="Leave a comment"]')
-    
+
     if not comment_buttons:
         # Альтернативные селекторы
         alt_selectors = [
@@ -59,7 +79,7 @@ def get_post_links(driver):
             'a[href*="/story.php"]',  # Прямые ссылки на посты
             'div[data-ft*="top_level_post_id"]'  # Контейнеры постов
         ]
-        
+
         for selector in alt_selectors:
             comment_buttons = driver.find_elements(By.CSS_SELECTOR, selector)
             if comment_buttons:
@@ -67,37 +87,51 @@ def get_post_links(driver):
                 break
     else:
         print(f"Найдено {len(comment_buttons)} кнопок 'Leave a comment'")
-    
+
     if not comment_buttons:
         print("Кнопки комментариев не найдены. Проверьте страницу группы.")
         print("Текущий URL:", driver.current_url)
         return []
-    
+
     # Собираем ссылки на посты
     post_urls = []
-    
+
     for i, button in enumerate(comment_buttons[:5]):  # Уменьшаем для тестирования
         try:
             print(f"Обрабатываем элемент #{i+1}")
-            
+
             # Скроллим к элементу
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
             time.sleep(1)
-            
+
             # Проверяем, является ли элемент ссылкой на пост
             if button.tag_name == 'a' and button.get_attribute('href') and 'story.php' in button.get_attribute('href'):
                 post_url = button.get_attribute('href')
+                # --- обновляем линк по шаблону ---
+                if group_name:
+                    m_id = re.search(r'/(\d+)/?$', post_url)
+                    if m_id:
+                        post_id = m_id.group(1)
+                        post_url = f"https://m.facebook.com/groups/{group_name}/permalink/{post_id}/"
+                # ---------------------------------
                 if post_url not in post_urls:
                     post_urls.append(post_url)
                     print(f"Найдена прямая ссылка на пост #{i+1}: {post_url}")
                 continue
-            
+
             # Ищем родительский контейнер поста для поиска ссылок
             try:
                 post_container = button.find_element(By.XPATH, './ancestor::div[contains(@data-ft, "top_level_post_id") or contains(@class, "story")]')
                 post_links = post_container.find_elements(By.CSS_SELECTOR, 'a[href*="/story.php"]')
                 for link in post_links:
                     post_url = link.get_attribute('href')
+                    # --- обновляем линк по шаблону ---
+                    if group_name:
+                        m_id = re.search(r'/(\d+)/?$', post_url)
+                        if m_id:
+                            post_id = m_id.group(1)
+                            post_url = f"https://m.facebook.com/groups/{group_name}/permalink/{post_id}/"
+                    # ---------------------------------
                     if post_url and post_url not in post_urls:
                         post_urls.append(post_url)
                         print(f"Найдена ссылка в контейнере поста #{i+1}: {post_url}")
@@ -106,41 +140,49 @@ def get_post_links(driver):
                     continue
             except:
                 pass
-            
+
             # Попробуем кликнуть по элементу
             try:
                 # Скроллим немного вверх чтобы избежать перекрытия
                 driver.execute_script("window.scrollBy(0, -100);")
                 time.sleep(1)
-                
+
                 # Сохраняем текущий URL перед кликом
                 url_before_click = driver.current_url
-                
+
                 # Используем JavaScript клик
                 driver.execute_script("arguments[0].click();", button)
                 time.sleep(3)
-                
+
                 # Получаем URL после клика
                 current_url = driver.current_url
                 print(f"URL до клика: {url_before_click}")
                 print(f"URL после клика: {current_url}")
-                
+
                 # Проверяем различные условия для определения поста
                 if (current_url != url_before_click and 
                     (('story.php' in current_url) or 
                      ('posts/' in current_url) or 
                      ('permalink' in current_url) or
                      current_url != original_url)):
-                    
-                    if current_url not in post_urls:
-                        post_urls.append(current_url)
-                        print(f"Добавлен пост #{i+1}: {current_url}")
-                
+
+                    # --- обновляем линк по шаблону ---
+                    post_url = current_url
+                    if group_name:
+                        m_id = re.search(r'/(\d+)/?$', post_url)
+                        if m_id:
+                            post_id = m_id.group(1)
+                            post_url = f"https://m.facebook.com/groups/{group_name}/permalink/{post_id}/"
+                    # ---------------------------------
+                    if post_url not in post_urls:
+                        post_urls.append(post_url)
+                        print(f"Добавлен пост #{i+1}: {post_urls}")
+
                 # Возвращаемся к исходной странице
                 if current_url != url_before_click:
                     driver.back()
                     time.sleep(3)
-                    
+
             except Exception as e:
                 print(f"Ошибка клика по элементу #{i+1}: {e}")
                 # Попробуем вернуться к исходной странице
@@ -151,25 +193,25 @@ def get_post_links(driver):
                 except:
                     pass
                 continue
-                
+
         except Exception as e:
             print(f"Общая ошибка с элементом #{i+1}: {e}")
             continue
-    
+
     print(f"Собрано {len(post_urls)} URL постов")
     return post_urls
 
-def parse_post(driver, post_url):
+def parse_post(driver, post_urls):
     try:
-        print(f"Загружаем пост: {post_url}")
-        driver.get(post_url)
+        print(f"Загружаем пост: {post_urls}")
+        driver.get(post_urls)
         time.sleep(5)  # Увеличиваем время ожидания
     except Exception as e:
-        print(f"Ошибка загрузки поста {post_url}: {e}")
+        print(f"Ошибка загрузки поста {post_urls}: {e}")
         return None
     
     post_data = {
-        'post_url': post_url,
+        'post_url': post_urls,
         'author_name': '',
         'author_url': '',
         'content': '',
@@ -372,13 +414,13 @@ def parse_post(driver, post_url):
         print(f"Всего найдено {comments_found} комментариев")
                 
     except Exception as e:
-        print(f"Общая ошибка парсинга поста {post_url}: {e}")
+        print(f"Общая ошибка парсинга поста {post_urls}: {e}")
     
     return post_data
 
 def main(group_url=None):
     driver = setup_driver()
-    
+    post_links = get_post_links(driver, group_url)
     try:
         load_cookies(driver)
         
